@@ -90,6 +90,7 @@ function populateLanguageSelects() {
   const selectIds = [
     "transSourceLanguage", "transTargetLanguage",
     "writeSourceLanguage", "writeTargetLanguage",
+    "targetLanguage",
     "backTranslationLanguage"
   ];
   for (const id of selectIds) {
