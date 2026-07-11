@@ -817,8 +817,8 @@ function positionPortalMenu(trigger, menu) {
   const viewportPadding = 8;
   const gap = 6;
   const width = Math.min(
-    Math.max(rect.width, 220),
-    Math.max(180, window.innerWidth - viewportPadding * 2)
+    Math.max(rect.width, 140),
+    Math.max(120, window.innerWidth - viewportPadding * 2)
   );
   const spaceBelow = window.innerHeight - rect.bottom - gap - viewportPadding;
   const spaceAbove = rect.top - gap - viewportPadding;
