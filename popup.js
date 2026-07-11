@@ -903,7 +903,7 @@ function localizeUI() {
     const value = dict[key];
     if (!value) return;
 
-    if (el.tagName === "INPUT" && el.hasAttribute("placeholder")) {
+    if ((el.tagName === "INPUT" || el.tagName === "TEXTAREA") && el.hasAttribute("placeholder")) {
       el.placeholder = value;
     } else {
       el.textContent = value;
