@@ -30,15 +30,11 @@ body {
   height: 600px;
   margin: 0;
   overflow: hidden;
+  background: transparent;
 }
 
 body {
   color: var(--text);
-  background:
-    radial-gradient(circle at 8% 4%, rgba(118, 180, 255, 0.42), transparent 31%),
-    radial-gradient(circle at 94% 16%, rgba(205, 151, 255, 0.28), transparent 30%),
-    radial-gradient(circle at 52% 100%, rgba(151, 233, 221, 0.22), transparent 42%),
-    linear-gradient(145deg, #eef5ff 0%, #f8f5ff 47%, #f3fbfa 100%);
   font-family: var(--font-stack);
   -webkit-font-smoothing: antialiased;
 }
@@ -61,6 +57,13 @@ button {
   height: 100%;
   flex-direction: column;
   isolation: isolate;
+  background:
+    radial-gradient(circle at 8% 4%, rgba(118, 180, 255, 0.42), transparent 31%),
+    radial-gradient(circle at 94% 16%, rgba(205, 151, 255, 0.28), transparent 30%),
+    radial-gradient(circle at 52% 100%, rgba(151, 233, 221, 0.22), transparent 42%),
+    linear-gradient(145deg, #eef5ff 0%, #f8f5ff 47%, #f3fbfa 100%);
+  border-radius: 16px;
+  overflow: hidden;
 }
 
 .topbar {
