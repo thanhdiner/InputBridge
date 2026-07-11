@@ -1003,7 +1003,7 @@
       }
       selectionState = { ...selectionState, ...next };
       positionSelectionUi();
-    }, 90);
+    }, 40);
   }
 
   function handleSelectionCandidate(root, target, options = {}) {
@@ -1048,10 +1048,10 @@
     }
 
     const iconDelay = options.deferIcon
-      ? 460
+      ? 180
       : options.pointerType === "touch"
-        ? 280
-        : 140;
+        ? 100
+        : 10;
     selectionTimer = window.setTimeout(() => {
       if (selectionState?.text !== snapshot.text) return;
       if (selectionCardEl?.style.display === "block") return;
