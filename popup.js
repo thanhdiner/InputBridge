@@ -1,5 +1,5 @@
 const DEFAULT_SETTINGS = {
-  settingsVersion: 7,
+  settingsVersion: 8,
   enabled: true,
   demoMode: false,
   engine: "google",
@@ -8,6 +8,8 @@ const DEFAULT_SETTINGS = {
   model: "gpt-4o-mini",
   sourceLanguage: "Auto detect",
   targetLanguage: "English",
+  writeSourceLanguage: "Auto detect",
+  writeTargetLanguage: "English",
   mode: "translate",
   tone: "natural",
   autoMode: "autoOnSend",
@@ -211,6 +213,8 @@ function updateToolUi() {
       ? "Polish"
       : "Clarify";
 
+  render();
+
   if (!$("popupInput").value.trim()) clearPopupResult();
 }
 
@@ -219,7 +223,10 @@ function render() {
     const el = $(id);
     if (!el) continue;
 
-    const value = settings[id];
+    let value = settings[id];
+    if (activeTool === "write" && (id === "sourceLanguage" || id === "targetLanguage")) {
+      value = id === "sourceLanguage" ? settings.writeSourceLanguage : settings.writeTargetLanguage;
+    }
     if (el.type === "checkbox") el.checked = Boolean(value);
     else el.value = value ?? "";
   }
@@ -271,7 +278,7 @@ async function runPopupTool(manual = false) {
           text,
           mode: activeWriteMode,
           tone: settings.tone,
-          targetLanguage: settings.targetLanguage,
+          targetLanguage: $("targetLanguage").value,
           contextHint: "InputBridge popup writing tool"
         };
 
@@ -417,7 +424,7 @@ async function swapLanguages() {
   const sourceSelect = $("sourceLanguage");
   const targetSelect = $("targetLanguage");
   const source = sourceSelect.value || "Auto detect";
-  const target = targetSelect.value || settings.targetLanguage || "English";
+  const target = targetSelect.value || (activeTool === "write" ? settings.writeTargetLanguage : settings.targetLanguage) || "English";
 
   let nextSource = target;
   let nextTarget;
@@ -437,8 +444,11 @@ async function swapLanguages() {
 
   sourceSelect.value = nextSource;
   targetSelect.value = nextTarget;
-  settings.sourceLanguage = nextSource;
-  settings.targetLanguage = nextTarget;
+  
+  const sourceKey = activeTool === "write" ? "writeSourceLanguage" : "sourceLanguage";
+  const targetKey = activeTool === "write" ? "writeTargetLanguage" : "targetLanguage";
+  settings[sourceKey] = nextSource;
+  settings[targetKey] = nextTarget;
   syncCustomSelects();
 
   const button = $("swapLanguages");
@@ -448,8 +458,8 @@ async function swapLanguages() {
   setTimeout(() => button.classList.remove("is-swapping"), 240);
 
   await chrome.storage.sync.set({
-    sourceLanguage: nextSource,
-    targetLanguage: nextTarget
+    [sourceKey]: nextSource,
+    [targetKey]: nextTarget
   });
 
   if ($("popupInput").value.trim()) runPopupTool(false);
@@ -466,8 +476,11 @@ async function persistQuickField(id) {
   if (!el) return;
 
   const value = readFieldValue(el);
-  settings[id] = value;
-  await chrome.storage.sync.set({ [id]: value });
+  const key = (activeTool === "write" && (id === "sourceLanguage" || id === "targetLanguage"))
+    ? (id === "sourceLanguage" ? "writeSourceLanguage" : "writeTargetLanguage")
+    : id;
+  settings[key] = value;
+  await chrome.storage.sync.set({ [key]: value });
   await notifyTabs();
   setStatus("Đã cập nhật.");
 }
@@ -548,7 +561,9 @@ async function loadSettings() {
         selectionAllowEditable: stored.selectionAllowEditable ?? false,
         selectionMinChars: Number(stored.selectionMinChars || 2),
         selectionMaxChars: Number(stored.selectionMaxChars || 1000),
-        selectionCardTheme: stored.selectionCardTheme || "light"
+        selectionCardTheme: stored.selectionCardTheme || "light",
+        writeSourceLanguage: stored.writeSourceLanguage || "Auto detect",
+        writeTargetLanguage: stored.writeTargetLanguage || "English"
       }
     : stored;
 

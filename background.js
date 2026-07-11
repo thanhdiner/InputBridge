@@ -3,7 +3,7 @@ import "./languages.js";
 const LANGUAGE_CATALOG = globalThis.InputBridgeLanguageCatalog;
 
 const DEFAULT_SETTINGS = {
-  settingsVersion: 7,
+  settingsVersion: 8,
   enabled: true,
   demoMode: false,
   engine: "google",
@@ -12,6 +12,8 @@ const DEFAULT_SETTINGS = {
   model: "gpt-4o-mini",
   sourceLanguage: "Auto detect",
   targetLanguage: "English",
+  writeSourceLanguage: "Auto detect",
+  writeTargetLanguage: "English",
   mode: "translate",
   tone: "natural",
   autoMode: "autoOnSend",
@@ -243,7 +245,9 @@ function migrateSettings(stored = {}) {
     selectionAllowEditable: stored.selectionAllowEditable ?? false,
     selectionMinChars: Number(stored.selectionMinChars || 2),
     selectionMaxChars: Number(stored.selectionMaxChars || 1000),
-    selectionCardTheme: stored.selectionCardTheme || "light"
+    selectionCardTheme: stored.selectionCardTheme || "light",
+    writeSourceLanguage: stored.writeSourceLanguage || "Auto detect",
+    writeTargetLanguage: stored.writeTargetLanguage || "English"
   };
 }
 
