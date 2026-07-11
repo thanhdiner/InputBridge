@@ -373,8 +373,11 @@ function renderPopupResult(data) {
     $("transResultPhonetic").textContent = data.phonetic || "";
     renderDictionary(data);
   } else {
-    const modeName = activeWriteMode === "polish" ? "Polished" : "Clarified";
-    $("writeResultMeta").textContent = `${modeName} · ${data.tone || settings.tone}`;
+    const modeKey = activeWriteMode === "polish" ? "mode-polished" : "mode-clarified";
+    const modeName = getTranslation(modeKey);
+    const toneVal = data.tone || settings.tone || "natural";
+    const toneName = getTranslation(`tone-${toneVal.toLowerCase()}`);
+    $("writeResultMeta").textContent = `${modeName} · ${toneName}`;
     hideDictionary();
   }
 }
@@ -1029,7 +1032,16 @@ const TRANSLATIONS = {
     "status-reset": "Đã reset về mặc định.",
     "status-site-on": "Đã bật site này.",
     "status-site-off": "Đã tắt site này.",
-    "status-error-failed": "Không xử lý được nội dung."
+    "status-error-failed": "Không xử lý được nội dung.",
+
+    "mode-polished": "Đã làm mượt",
+    "mode-clarified": "Đã làm rõ nghĩa",
+    "tone-natural": "tự nhiên",
+    "tone-casual": "thân mật",
+    "tone-neutral": "trung lập",
+    "tone-professional": "chuyên nghiệp",
+    "tone-polite": "lịch sự",
+    "tone-direct": "thẳng thắn"
   },
   en: {
     "tool-tabs-translate": "Translate",
@@ -1118,6 +1130,15 @@ const TRANSLATIONS = {
     "status-reset": "Reset to defaults.",
     "status-site-on": "Site enabled.",
     "status-site-off": "Site disabled.",
-    "status-error-failed": "Failed to process content."
+    "status-error-failed": "Failed to process content.",
+
+    "mode-polished": "Polished",
+    "mode-clarified": "Clarified",
+    "tone-natural": "natural",
+    "tone-casual": "casual",
+    "tone-neutral": "neutral",
+    "tone-professional": "professional",
+    "tone-polite": "polite",
+    "tone-direct": "direct"
   }
 };
