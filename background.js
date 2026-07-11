@@ -154,7 +154,7 @@ async function handleMessage(message, sender) {
     };
 
     if (settings.demoMode) {
-      return { ok: true, data: demoTransform(payload, settings), demo: true };
+      return { ok: true, data: await demoTransform(payload, settings), demo: true };
     }
 
     const data = await transformText(payload, settings);
@@ -297,7 +297,7 @@ async function transformText(payload, settings) {
     return callOpenAI(payload, settings);
   }
 
-  return demoTransform(payload, {
+  return await demoTransform(payload, {
     ...settings,
     demoReason: "Mode này cần LLM. Bật AI enhance và nhập API key để dùng thật."
   });
@@ -564,7 +564,7 @@ function languageNameFromCode(code, fallback = "Auto") {
   return LANGUAGE_CATALOG?.nameFor(code, fallback) || fallback;
 }
 
-function demoTransform(payload, settings) {
+async function demoTransform(payload, settings) {
   const modeLabel = {
     translate: `Send as ${payload.targetLanguage}`,
     polish: "Polish",
@@ -572,17 +572,27 @@ function demoTransform(payload, settings) {
     enhanceTranslation: "AI enhance"
   }[payload.mode] || "Transform";
 
-  let result = payload.text;
+  const targetCode = languageToCode(payload.targetLanguage);
+  let translatedText = payload.text;
+  if (payload.mode === "polish" || payload.mode === "clarify" || payload.mode === "enhanceTranslation") {
+    try {
+      translatedText = await callGoogleTranslate(payload.text, "auto", targetCode);
+    } catch (e) {
+      console.error("Demo translation failed", e);
+    }
+  }
+
+  let result = translatedText;
   if (payload.mode === "translate") {
     result = `[Demo ${payload.targetLanguage}] ${payload.text}`;
   } else if (payload.mode === "polish") {
-    result = payload.text
+    result = translatedText
       .replace(/\s+/g, " ")
       .replace(/^./, (c) => c.toUpperCase());
   } else if (payload.mode === "clarify") {
-    result = `Ý chính: ${payload.text.replace(/\s+/g, " ")}`;
+    result = `Ý chính: ${translatedText.replace(/\s+/g, " ")}`;
   } else if (payload.mode === "enhanceTranslation") {
-    result = payload.text.replace(/\s+/g, " ");
+    result = translatedText.replace(/\s+/g, " ");
   }
 
   return {
