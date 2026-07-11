@@ -80,13 +80,24 @@ async function init() {
   updateToolUi();
 }
 
+function getActiveEl(baseId) {
+  const prefix = activeTool === "translate" ? "trans" : "write";
+  const key = prefix + baseId.charAt(0).toUpperCase() + baseId.slice(1);
+  return $(key);
+}
+
 function populateLanguageSelects() {
-  for (const id of ["sourceLanguage", "targetLanguage", "backTranslationLanguage"]) {
+  const selectIds = [
+    "transSourceLanguage", "transTargetLanguage",
+    "writeSourceLanguage", "writeTargetLanguage",
+    "backTranslationLanguage"
+  ];
+  for (const id of selectIds) {
     const select = $(id);
     if (!select) continue;
 
     const fragment = document.createDocumentFragment();
-    if (id === "sourceLanguage") {
+    if (id.includes("SourceLanguage")) {
       const autoOption = document.createElement("option");
       autoOption.value = "Auto detect";
       autoOption.textContent = "Auto detect";
@@ -110,10 +121,19 @@ function bindEvents() {
   $("save").addEventListener("click", saveAdvanced);
   $("reset").addEventListener("click", reset);
   $("toggleSite").addEventListener("click", toggleCurrentSite);
-  $("runTool").addEventListener("click", () => runPopupTool(true));
-  $("clearInput").addEventListener("click", clearPopupInput);
-  $("copyResult").addEventListener("click", copyPopupResult);
-  $("swapLanguages").addEventListener("click", swapLanguages);
+
+  // Tab-specific actions
+  $("transRunTool").addEventListener("click", () => runPopupTool(true));
+  $("writeRunTool").addEventListener("click", () => runPopupTool(true));
+
+  $("transClearInput").addEventListener("click", clearPopupInput);
+  $("writeClearInput").addEventListener("click", clearPopupInput);
+
+  $("transCopyResult").addEventListener("click", copyPopupResult);
+  $("writeCopyResult").addEventListener("click", copyPopupResult);
+
+  $("transSwapLanguages").addEventListener("click", swapLanguages);
+  $("writeSwapLanguages").addEventListener("click", swapLanguages);
 
   document.querySelectorAll("[data-tool]").forEach((button) => {
     button.addEventListener("click", () => setActiveTool(button.dataset.tool));
@@ -123,22 +143,30 @@ function bindEvents() {
     button.addEventListener("click", () => setWriteMode(button.dataset.writeMode));
   });
 
-  $("popupInput").addEventListener("input", () => {
-    updateCharacterCount();
-    if (!$("popupInput").value.trim()) {
-      clearPopupResult();
-      return;
-    }
-    schedulePopupRun();
-  });
+  const setupInputListeners = (inputId) => {
+    const el = $(inputId);
+    if (!el) return;
+    el.addEventListener("input", () => {
+      updateCharacterCount();
+      if (!el.value.trim()) {
+        clearPopupResult();
+        return;
+      }
+      schedulePopupRun();
+    });
 
-  $("popupInput").addEventListener("keydown", (event) => {
-    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-      event.preventDefault();
-      runPopupTool(true);
-    }
-  });
+    el.addEventListener("keydown", (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+        event.preventDefault();
+        runPopupTool(true);
+      }
+    });
+  };
 
+  setupInputListeners("transInput");
+  setupInputListeners("writeInput");
+
+  // Advanced settings change listeners
   for (const id of fields) {
     const el = $(id);
     if (!el) continue;
@@ -146,11 +174,33 @@ function bindEvents() {
     el.addEventListener("change", async () => {
       if (!quickFields.has(id)) return;
       await persistQuickField(id);
-      if ((id === "sourceLanguage" || id === "targetLanguage") && $("popupInput").value.trim()) {
+      const activeInputVal = getActiveEl("input").value.trim();
+      if (activeInputVal) {
         runPopupTool(false);
       }
     });
   }
+
+  // Quick languages change listeners
+  const handleLanguageChange = async (settingsKey, selectId) => {
+    const el = $(selectId);
+    if (!el) return;
+    const value = el.value;
+    settings[settingsKey] = value;
+    await chrome.storage.sync.set({ [settingsKey]: value });
+    await notifyTabs();
+    setStatus("Đã cập nhật.");
+
+    const inputVal = getActiveEl("input").value.trim();
+    if (inputVal) {
+      runPopupTool(false);
+    }
+  };
+
+  $("transSourceLanguage").addEventListener("change", () => handleLanguageChange("sourceLanguage", "transSourceLanguage"));
+  $("transTargetLanguage").addEventListener("change", () => handleLanguageChange("targetLanguage", "transTargetLanguage"));
+  $("writeSourceLanguage").addEventListener("change", () => handleLanguageChange("writeSourceLanguage", "writeSourceLanguage"));
+  $("writeTargetLanguage").addEventListener("change", () => handleLanguageChange("writeTargetLanguage", "writeTargetLanguage"));
 }
 
 function openSettings() {
@@ -175,14 +225,16 @@ function setActiveTool(tool) {
   if (!tool || tool === activeTool) return;
   activeTool = tool;
   updateToolUi();
-  if ($("popupInput").value.trim()) runPopupTool(false);
+  const inputVal = getActiveEl("input").value.trim();
+  if (inputVal) runPopupTool(false);
 }
 
 function setWriteMode(mode) {
   if (!mode || mode === activeWriteMode) return;
   activeWriteMode = mode;
   updateToolUi();
-  if (activeTool === "write" && $("popupInput").value.trim()) runPopupTool(false);
+  const inputVal = getActiveEl("input").value.trim();
+  if (activeTool === "write" && inputVal) runPopupTool(false);
 }
 
 function updateToolUi() {
@@ -199,23 +251,21 @@ function updateToolUi() {
   });
 
   const translate = activeTool === "translate";
-  $("translateControls").hidden = false;
-  $("writeControls").hidden = translate;
-  $("inputLabel").textContent = translate ? "Text to translate" : "Text to rewrite";
-  $("popupInput").placeholder = translate
-    ? "Type or paste text here..."
-    : activeWriteMode === "polish"
+  $("translateTabContent").hidden = !translate;
+  $("writeTabContent").hidden = translate;
+
+  if (activeTool === "write") {
+    $("writeInputLabel").textContent = "Text to rewrite";
+    $("writeInput").placeholder = activeWriteMode === "polish"
       ? "Paste a rough sentence to make it cleaner..."
       : "Paste a sentence that needs to be clearer...";
-  $("runTool").textContent = translate
-    ? "Translate"
-    : activeWriteMode === "polish"
-      ? "Polish"
-      : "Clarify";
+    $("writeRunTool").textContent = activeWriteMode === "polish" ? "Polish" : "Clarify";
+  }
 
   render();
 
-  if (!$("popupInput").value.trim()) clearPopupResult();
+  const inputVal = getActiveEl("input").value.trim();
+  if (!inputVal) clearPopupResult();
 }
 
 function render() {
@@ -223,13 +273,16 @@ function render() {
     const el = $(id);
     if (!el) continue;
 
-    let value = settings[id];
-    if (activeTool === "write" && (id === "sourceLanguage" || id === "targetLanguage")) {
-      value = id === "sourceLanguage" ? settings.writeSourceLanguage : settings.writeTargetLanguage;
-    }
+    const value = settings[id];
     if (el.type === "checkbox") el.checked = Boolean(value);
     else el.value = value ?? "";
   }
+
+  // Load quick languages
+  if ($("transSourceLanguage")) $("transSourceLanguage").value = settings.sourceLanguage || "Auto detect";
+  if ($("transTargetLanguage")) $("transTargetLanguage").value = settings.targetLanguage || "English";
+  if ($("writeSourceLanguage")) $("writeSourceLanguage").value = settings.writeSourceLanguage || "Auto detect";
+  if ($("writeTargetLanguage")) $("writeTargetLanguage").value = settings.writeTargetLanguage || "English";
 
   $("siteName").textContent = activeOrigin || "Không đọc được site";
 
@@ -249,7 +302,7 @@ function schedulePopupRun() {
 
 async function runPopupTool(manual = false) {
   clearTimeout(popupDebounceTimer);
-  const text = $("popupInput").value.trim();
+  const text = getActiveEl("input").value.trim();
   if (!text) {
     clearPopupResult();
     return;
@@ -268,8 +321,8 @@ async function runPopupTool(manual = false) {
       ? {
           type: "IB_POPUP_TRANSLATE",
           text,
-          sourceLanguage: $("sourceLanguage").value,
-          targetLanguage: $("targetLanguage").value,
+          sourceLanguage: $("transSourceLanguage").value,
+          targetLanguage: $("transTargetLanguage").value,
           fallbackLanguage: settings.backTranslationLanguage,
           maxChars: 5000
         }
@@ -278,7 +331,7 @@ async function runPopupTool(manual = false) {
           text,
           mode: activeWriteMode,
           tone: settings.tone,
-          targetLanguage: $("targetLanguage").value,
+          targetLanguage: $("writeTargetLanguage").value,
           contextHint: "InputBridge popup writing tool"
         };
 
@@ -302,33 +355,32 @@ async function runPopupTool(manual = false) {
 
 function renderPopupResult(data) {
   const result = String(data.result || "").trim();
-  lastPopupResult = result;
-  $("resultText").textContent = result || "Không có kết quả.";
-  $("resultPanel").classList.toggle("is-empty", !result);
-  $("copyResult").disabled = !result;
+  getActiveEl("resultText").textContent = result || "Không có kết quả.";
+  getActiveEl("resultPanel").classList.toggle("is-empty", !result);
+  getActiveEl("copyResult").disabled = !result;
 
   if (activeTool === "translate") {
-    const source = data.detectedSourceLanguage || $("sourceLanguage").value || "Auto";
-    const target = data.targetLanguage || $("targetLanguage").value;
+    const source = data.detectedSourceLanguage || $("transSourceLanguage").value || "Auto";
+    const target = data.targetLanguage || $("transTargetLanguage").value;
     lastDetectedSourceLanguage = source === "Auto" ? "" : source;
-    $("resultMeta").textContent = `${source} → ${target}`;
-    $("resultPhonetic").textContent = data.phonetic || "";
+    $("transResultMeta").textContent = `${source} → ${target}`;
+    $("transResultPhonetic").textContent = data.phonetic || "";
     renderDictionary(data);
   } else {
     const modeName = activeWriteMode === "polish" ? "Polished" : "Clarified";
-    $("resultMeta").textContent = `${modeName} · ${data.tone || settings.tone}`;
-    $("resultPhonetic").textContent = "";
+    $("writeResultMeta").textContent = `${modeName} · ${data.tone || settings.tone}`;
     hideDictionary();
   }
 }
 
 function renderPopupError(message) {
-  lastPopupResult = "";
-  $("resultText").textContent = message;
-  $("resultMeta").textContent = "Error";
-  $("resultPhonetic").textContent = "";
-  $("resultPanel").classList.remove("is-empty");
-  $("copyResult").disabled = true;
+  getActiveEl("resultText").textContent = message;
+  getActiveEl("resultMeta").textContent = "Error";
+  if (activeTool === "translate") {
+    $("transResultPhonetic").textContent = "";
+  }
+  getActiveEl("resultPanel").classList.remove("is-empty");
+  getActiveEl("copyResult").disabled = true;
   hideDictionary();
 }
 
@@ -339,8 +391,8 @@ function renderDictionary(data) {
     return;
   }
 
-  $("dictionaryHeadword").textContent = data.headword || data.original || "";
-  const list = $("dictionaryList");
+  $("transDictionaryHeadword").textContent = data.headword || data.original || "";
+  const list = $("transDictionaryList");
   list.replaceChildren();
 
   for (const group of groups) {
@@ -365,53 +417,55 @@ function renderDictionary(data) {
     list.appendChild(wrapper);
   }
 
-  $("dictionaryBlock").hidden = false;
+  $("transDictionaryBlock").hidden = false;
 }
 
 function hideDictionary() {
-  $("dictionaryBlock").hidden = true;
-  $("dictionaryList").replaceChildren();
+  $("transDictionaryBlock").hidden = true;
+  $("transDictionaryList").replaceChildren();
 }
 
 function setResultLoading(loading) {
-  $("resultPanel").classList.toggle("is-loading", loading);
-  $("resultLoading").hidden = !loading;
-  $("runTool").disabled = loading;
+  getActiveEl("resultPanel").classList.toggle("is-loading", loading);
+  getActiveEl("resultLoading").hidden = !loading;
+  getActiveEl("runTool").disabled = loading;
 }
 
 function clearPopupInput() {
   clearTimeout(popupDebounceTimer);
   popupRequestId += 1;
-  $("popupInput").value = "";
+  getActiveEl("input").value = "";
   updateCharacterCount();
   clearPopupResult();
-  $("popupInput").focus();
+  getActiveEl("input").focus();
 }
 
 function clearPopupResult() {
-  lastPopupResult = "";
-  $("resultText").textContent = activeTool === "translate"
+  getActiveEl("resultText").textContent = activeTool === "translate"
     ? "Translation will appear here."
     : "Rewritten text will appear here.";
-  $("resultMeta").textContent = "Result";
-  $("resultPhonetic").textContent = "";
-  $("resultPanel").classList.add("is-empty");
-  $("resultPanel").classList.remove("is-loading");
-  $("resultLoading").hidden = true;
-  $("copyResult").disabled = true;
+  getActiveEl("resultMeta").textContent = "Result";
+  if (activeTool === "translate") {
+    $("transResultPhonetic").textContent = "";
+  }
+  getActiveEl("resultPanel").classList.add("is-empty");
+  getActiveEl("resultPanel").classList.remove("is-loading");
+  getActiveEl("resultLoading").hidden = true;
+  getActiveEl("copyResult").disabled = true;
   lastDetectedSourceLanguage = "";
   hideDictionary();
 }
 
 function updateCharacterCount() {
-  const length = $("popupInput").value.length;
-  $("charCount").textContent = `${length} / 5000`;
+  const length = getActiveEl("input").value.length;
+  getActiveEl("charCount").textContent = `${length} / 5000`;
 }
 
 async function copyPopupResult() {
-  if (!lastPopupResult) return;
+  const text = getActiveEl("resultText").textContent;
+  if (!text || text.startsWith("Translation will appear") || text.startsWith("Rewritten text will appear") || text === "Không có kết quả." || text === "Error") return;
   try {
-    await navigator.clipboard.writeText(lastPopupResult);
+    await navigator.clipboard.writeText(text);
     setStatus("Đã copy.");
   } catch {
     setStatus("Không copy được.");
@@ -421,8 +475,8 @@ async function copyPopupResult() {
 async function swapLanguages() {
   closeAllCustomSelects();
 
-  const sourceSelect = $("sourceLanguage");
-  const targetSelect = $("targetLanguage");
+  const sourceSelect = getActiveEl("sourceLanguage");
+  const targetSelect = getActiveEl("targetLanguage");
   const source = sourceSelect.value || "Auto detect";
   const target = targetSelect.value || (activeTool === "write" ? settings.writeTargetLanguage : settings.targetLanguage) || "English";
 
@@ -451,7 +505,7 @@ async function swapLanguages() {
   settings[targetKey] = nextTarget;
   syncCustomSelects();
 
-  const button = $("swapLanguages");
+  const button = getActiveEl("swapLanguages");
   button.classList.remove("is-swapping");
   void button.offsetWidth;
   button.classList.add("is-swapping");
@@ -462,7 +516,8 @@ async function swapLanguages() {
     [targetKey]: nextTarget
   });
 
-  if ($("popupInput").value.trim()) runPopupTool(false);
+  const inputVal = getActiveEl("input").value.trim();
+  if (inputVal) runPopupTool(false);
 }
 
 function getFallbackLanguage(language) {

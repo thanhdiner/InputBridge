@@ -436,7 +436,8 @@ button:active {
   cursor: default;
 }
 
-#popupInput {
+#transInput,
+#writeInput {
   display: block;
   width: 100%;
   min-height: 112px;
@@ -451,7 +452,8 @@ button:active {
   line-height: 1.52;
 }
 
-#popupInput::placeholder {
+#transInput::placeholder,
+#writeInput::placeholder {
   color: #a0a1a6;
 }
 
@@ -465,7 +467,8 @@ button:active {
   border-top: 1px solid rgba(60, 60, 67, 0.07);
 }
 
-#charCount {
+#transCharCount,
+#writeCharCount {
   color: var(--text-tertiary);
   font-size: 9.5px;
   font-variant-numeric: tabular-nums;

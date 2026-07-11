@@ -35,65 +35,112 @@
         </div>
 
         <section class="translator-shell">
-          <div id="translateControls" class="language-bar">
-            <label class="source-language">
-              <span>Source</span>
-              <select id="sourceLanguage" aria-label="Source language"></select>
-            </label>
-            <button id="swapLanguages" class="language-swap" type="button" aria-label="Swap languages" title="Swap languages">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M7 7h11l-3-3M17 17H6l3 3" />
-              </svg>
-            </button>
-            <label class="target-language">
-              <span>Target</span>
-              <select id="targetLanguage" aria-label="Target language"></select>
-            </label>
-          </div>
-
-          <div id="writeControls" class="write-controls" hidden>
-            <span class="control-label">Writing mode</span>
-            <div class="write-mode-tabs" role="tablist" aria-label="Writing mode">
-              <button type="button" data-write-mode="polish" class="is-active">Polish</button>
-              <button type="button" data-write-mode="clarify">Clarify</button>
+          <!-- Translate Tab Content -->
+          <div id="translateTabContent" class="tab-content">
+            <div id="transLanguageBar" class="language-bar">
+              <label class="source-language">
+                <span>Source</span>
+                <select id="transSourceLanguage" aria-label="Source language"></select>
+              </label>
+              <button id="transSwapLanguages" class="language-swap" type="button" aria-label="Swap languages" title="Swap languages">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M7 7h11l-3-3M17 17H6l3 3" />
+                </svg>
+              </button>
+              <label class="target-language">
+                <span>Target</span>
+                <select id="transTargetLanguage" aria-label="Target language"></select>
+              </label>
             </div>
-          </div>
 
-          <div class="input-panel">
-            <div class="panel-head">
-              <span id="inputLabel">Text to translate</span>
-              <button id="clearInput" class="text-button" type="button">Clear</button>
-            </div>
-            <textarea id="popupInput" maxlength="5000" placeholder="Type or paste text here..."></textarea>
-            <div class="input-footer">
-              <span id="charCount">0 / 5000</span>
-              <button id="runTool" class="primary compact-primary" type="button">Translate</button>
-            </div>
-          </div>
-
-          <div id="resultPanel" class="result-panel is-empty" aria-live="polite">
-            <div class="panel-head">
-              <div>
-                <span id="resultMeta">Result</span>
-                <small id="resultPhonetic"></small>
+            <div class="input-panel">
+              <div class="panel-head">
+                <span id="transInputLabel">Text to translate</span>
+                <button id="transClearInput" class="text-button" type="button">Clear</button>
               </div>
-              <button id="copyResult" class="icon-text-button" type="button" disabled>Copy</button>
-            </div>
-            <div id="resultText" class="result-text">Translation will appear here.</div>
-            <div id="resultLoading" class="result-loading" hidden>
-              <span></span><span></span><span></span>
-            </div>
-          </div>
-
-          <section id="dictionaryBlock" class="dictionary-block" hidden>
-            <div class="dictionary-head">
-              <div>
-                <span>Dictionary</span>
-                <strong id="dictionaryHeadword"></strong>
+              <textarea id="transInput" maxlength="5000" placeholder="Type or paste text here..."></textarea>
+              <div class="input-footer">
+                <span id="transCharCount">0 / 5000</span>
+                <button id="transRunTool" class="primary compact-primary" type="button">Translate</button>
               </div>
             </div>
-            <div id="dictionaryList" class="dictionary-list"></div>
-          </section>
+
+            <div id="transResultPanel" class="result-panel is-empty" aria-live="polite">
+              <div class="panel-head">
+                <div>
+                  <span id="transResultMeta">Result</span>
+                  <small id="transResultPhonetic"></small>
+                </div>
+                <button id="transCopyResult" class="icon-text-button" type="button" disabled>Copy</button>
+              </div>
+              <div id="transResultText" class="result-text">Translation will appear here.</div>
+              <div id="transResultLoading" class="result-loading" hidden>
+                <span></span><span></span><span></span>
+              </div>
+            </div>
+
+            <section id="transDictionaryBlock" class="dictionary-block" hidden>
+              <div class="dictionary-head">
+                <div>
+                  <span>Dictionary</span>
+                  <strong id="transDictionaryHeadword"></strong>
+                </div>
+              </div>
+              <div id="transDictionaryList" class="dictionary-list"></div>
+            </section>
+          </div>
+
+          <!-- Write Tab Content -->
+          <div id="writeTabContent" class="tab-content" hidden>
+            <div id="writeLanguageBar" class="language-bar">
+              <label class="source-language">
+                <span>Source</span>
+                <select id="writeSourceLanguage" aria-label="Source language"></select>
+              </label>
+              <button id="writeSwapLanguages" class="language-swap" type="button" aria-label="Swap languages" title="Swap languages">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M7 7h11l-3-3M17 17H6l3 3" />
+                </svg>
+              </button>
+              <label class="target-language">
+                <span>Target</span>
+                <select id="writeTargetLanguage" aria-label="Target language"></select>
+              </label>
+            </div>
+
+            <div id="writeControls" class="write-controls">
+              <span class="control-label">Writing mode</span>
+              <div class="write-mode-tabs" role="tablist" aria-label="Writing mode">
+                <button type="button" data-write-mode="polish" class="is-active">Polish</button>
+                <button type="button" data-write-mode="clarify">Clarify</button>
+              </div>
+            </div>
+
+            <div class="input-panel">
+              <div class="panel-head">
+                <span id="writeInputLabel">Text to rewrite</span>
+                <button id="writeClearInput" class="text-button" type="button">Clear</button>
+              </div>
+              <textarea id="writeInput" maxlength="5000" placeholder="Paste a rough sentence to make it cleaner..."></textarea>
+              <div class="input-footer">
+                <span id="writeCharCount">0 / 5000</span>
+                <button id="writeRunTool" class="primary compact-primary" type="button">Polish</button>
+              </div>
+            </div>
+
+            <div id="writeResultPanel" class="result-panel is-empty" aria-live="polite">
+              <div class="panel-head">
+                <div>
+                  <span id="writeResultMeta">Result</span>
+                </div>
+                <button id="writeCopyResult" class="icon-text-button" type="button" disabled>Copy</button>
+              </div>
+              <div id="writeResultText" class="result-text">Rewritten text will appear here.</div>
+              <div id="writeResultLoading" class="result-loading" hidden>
+                <span></span><span></span><span></span>
+              </div>
+            </div>
+          </div>
         </section>
 
         <section class="site-strip compact-site-strip">
