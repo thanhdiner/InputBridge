@@ -1,0 +1,63 @@
+{
+  "manifest_version": 3,
+  "name": "InputBridge",
+  "version": "0.2.13",
+  "description": "AI input overlay: live preview, Google Translate by default, optional LLM enhancement, and auto-replace inside web text fields.",
+  "permissions": [
+    "storage",
+    "tabs",
+    "activeTab",
+    "declarativeNetRequestWithHostAccess"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "https://translate.googleapis.com/*",
+    "https://translate.google.com/*",
+    "https://api.openai.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "InputBridge",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["shadow-hook.js"],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": true,
+      "match_about_blank": true,
+      "match_origin_as_fallback": true
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["languages.js", "content.js"],
+      "css": ["content.css"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true,
+      "match_origin_as_fallback": true
+    }
+  ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "inputbridge_google_translate_rules",
+        "enabled": true,
+        "path": "netRules.json"
+      }
+    ]
+  },
+  "commands": {
+    "toggle-site": {
+      "suggested_key": {
+        "default": "Alt+J"
+      },
+      "description": "Toggle InputBridge on this site"
+    }
+  }
+}

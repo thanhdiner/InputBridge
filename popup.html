@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>InputBridge</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="topbar">
+        <button id="homeButton" class="brand" type="button" aria-label="Trang chính">
+          <span class="brand-mark">IB</span>
+          <span class="brand-name">InputBridge</span>
+        </button>
+
+        <div class="topbar-actions">
+          <label class="switch switch-compact" title="Bật hoặc tắt InputBridge">
+            <input id="enabled" type="checkbox" />
+            <span></span>
+          </label>
+          <button id="openSettings" class="icon-button" type="button" aria-label="Mở cài đặt" title="Cài đặt">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 15.25A3.25 3.25 0 1 0 12 8.75a3.25 3.25 0 0 0 0 6.5Z" />
+              <path d="M19.1 13.2c.05-.39.08-.79.08-1.2s-.03-.81-.08-1.2l2.05-1.6-2-3.46-2.55 1.03a8.7 8.7 0 0 0-2.08-1.2L14.14 2h-4.28l-.38 2.57a8.7 8.7 0 0 0-2.08 1.2L4.85 4.74l-2 3.46 2.05 1.6c-.05.39-.08.79-.08 1.2s.03.81.08 1.2l-2.05 1.6 2 3.46 2.55-1.03a8.7 8.7 0 0 0 2.08 1.2L9.86 20h4.28l.38-2.57a8.7 8.7 0 0 0 2.08-1.2l2.55 1.03 2-3.46-2.05-1.6Z" />
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <section id="mainView" class="view is-active" aria-label="InputBridge tools">
+        <div class="tool-tabs" role="tablist" aria-label="Công cụ">
+          <button type="button" data-tool="translate" class="is-active">Translate</button>
+          <button type="button" data-tool="write">Write</button>
+        </div>
+
+        <section class="translator-shell">
+          <div id="translateControls" class="language-bar">
+            <label class="source-language">
+              <span>Source</span>
+              <select id="sourceLanguage" aria-label="Source language"></select>
+            </label>
+            <button id="swapLanguages" class="language-swap" type="button" aria-label="Swap languages" title="Swap languages">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M7 7h11l-3-3M17 17H6l3 3" />
+              </svg>
+            </button>
+            <label class="target-language">
+              <span>Target</span>
+              <select id="targetLanguage" aria-label="Target language"></select>
+            </label>
+          </div>
+
+          <div id="writeControls" class="write-controls" hidden>
+            <span class="control-label">Writing mode</span>
+            <div class="write-mode-tabs" role="tablist" aria-label="Writing mode">
+              <button type="button" data-write-mode="polish" class="is-active">Polish</button>
+              <button type="button" data-write-mode="clarify">Clarify</button>
+            </div>
+          </div>
+
+          <div class="input-panel">
+            <div class="panel-head">
+              <span id="inputLabel">Text to translate</span>
+              <button id="clearInput" class="text-button" type="button">Clear</button>
+            </div>
+            <textarea id="popupInput" maxlength="5000" placeholder="Type or paste text here..."></textarea>
+            <div class="input-footer">
+              <span id="charCount">0 / 5000</span>
+              <button id="runTool" class="primary compact-primary" type="button">Translate</button>
+            </div>
+          </div>
+
+          <div id="resultPanel" class="result-panel is-empty" aria-live="polite">
+            <div class="panel-head">
+              <div>
+                <span id="resultMeta">Result</span>
+                <small id="resultPhonetic"></small>
+              </div>
+              <button id="copyResult" class="icon-text-button" type="button" disabled>Copy</button>
+            </div>
+            <div id="resultText" class="result-text">Translation will appear here.</div>
+            <div id="resultLoading" class="result-loading" hidden>
+              <span></span><span></span><span></span>
+            </div>
+          </div>
+
+          <section id="dictionaryBlock" class="dictionary-block" hidden>
+            <div class="dictionary-head">
+              <div>
+                <span>Dictionary</span>
+                <strong id="dictionaryHeadword"></strong>
+              </div>
+            </div>
+            <div id="dictionaryList" class="dictionary-list"></div>
+          </section>
+        </section>
+
+        <section class="site-strip compact-site-strip">
+          <div class="site-copy">
+            <span>Site hiện tại</span>
+            <strong id="siteName">Đang đọc...</strong>
+          </div>
+          <button id="toggleSite" class="site-action" type="button">Tắt site</button>
+        </section>
+      </section>
+
+      <section id="settingsView" class="view settings-view" aria-label="Cài đặt nâng cao" hidden>
+        <div class="settings-header">
+          <button id="backToMain" class="back-button" type="button" aria-label="Quay lại"><span>‹</span></button>
+          <div>
+            <span class="eyebrow">Advanced</span>
+            <h1>Cài đặt</h1>
+          </div>
+        </div>
+
+        <section class="settings-group">
+          <div class="group-title">
+            <h2>Xử lý mặc định</h2>
+            <p>Thiết lập cách InputBridge xử lý nội dung trong ô nhập trên web.</p>
+          </div>
+          <div class="form-grid">
+            <label class="field">
+              <span>Mode</span>
+              <select id="mode">
+                <option value="translate">Send as language</option>
+                <option value="polish">Polish bằng LLM</option>
+                <option value="clarify">Clarify bằng LLM</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Engine mặc định</span>
+              <select id="engine"><option value="google">Google Translate</option></select>
+            </label>
+            <label class="field">
+              <span>Tone khi bật LLM</span>
+              <select id="tone">
+                <option value="natural">Natural</option>
+                <option value="casual">Casual</option>
+                <option value="neutral">Neutral</option>
+                <option value="professional">Professional</option>
+                <option value="polite">Polite</option>
+                <option value="direct">Direct</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Auto behavior</span>
+              <select id="autoMode">
+                <option value="preview">Preview only</option>
+                <option value="autoReplace">Auto replace sau khi ngừng gõ</option>
+                <option value="autoOnSend">Auto on Send thử nghiệm</option>
+              </select>
+            </label>
+          </div>
+        </section>
+
+        <section class="settings-group">
+          <div class="group-title"><h2>Preview và gửi</h2></div>
+          <div class="settings-list">
+            <label class="setting-row compact-row">
+              <span><strong>Live preview</strong><small>Xem nội dung xử lý ngay khi đang gõ</small></span>
+              <span class="switch"><input id="livePreview" type="checkbox" /><span></span></span>
+            </label>
+            <label class="setting-row compact-row">
+              <span><strong>Tab để nhận preview</strong></span>
+              <span class="switch"><input id="acceptWithTab" type="checkbox" /><span></span></span>
+            </label>
+            <label class="setting-row compact-row">
+              <span><strong>Hiện dịch ngược</strong></span>
+              <span class="switch"><input id="showBackTranslation" type="checkbox" /><span></span></span>
+            </label>
+            <label class="setting-row compact-row">
+              <span><strong>AI enhance sau Google dịch</strong></span>
+              <span class="switch"><input id="aiEnhance" type="checkbox" /><span></span></span>
+            </label>
+            <label class="setting-row compact-row">
+              <span><strong>Demo mode</strong></span>
+              <span class="switch"><input id="demoMode" type="checkbox" /><span></span></span>
+            </label>
+          </div>
+        </section>
+
+        <section class="settings-group">
+          <div class="group-title">
+            <h2>Selection translation</h2>
+            <p>Điều khiển icon dịch khi bôi đen văn bản.</p>
+          </div>
+          <div class="settings-list selection-master">
+            <label class="setting-row compact-row">
+              <span><strong>Bật dịch văn bản được chọn</strong></span>
+              <span class="switch"><input id="selectionTranslation" type="checkbox" /><span></span></span>
+            </label>
+          </div>
+          <div class="form-grid separated">
+            <label class="field wide">
+              <span>Trigger</span>
+              <select id="selectionTrigger">
+                <option value="icon">Click icon</option>
+                <option value="instant">Instant after selection</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Minimum characters</span>
+              <input id="selectionMinChars" type="number" min="1" max="20" step="1" />
+            </label>
+            <label class="field">
+              <span>Maximum characters</span>
+              <input id="selectionMaxChars" type="number" min="20" max="5000" step="50" />
+            </label>
+          </div>
+          <div class="settings-list separated">
+            <label class="setting-row compact-row">
+              <span><strong>Giữ Shift để dịch ngay</strong></span>
+              <span class="switch"><input id="selectionShiftTranslate" type="checkbox" /><span></span></span>
+            </label>
+            <label class="setting-row compact-row">
+              <span><strong>Cho phép trong ô nhập liệu</strong></span>
+              <span class="switch"><input id="selectionAllowEditable" type="checkbox" /><span></span></span>
+            </label>
+          </div>
+        </section>
+
+        <section class="settings-group">
+          <div class="group-title"><h2>Timing và dịch ngược</h2></div>
+          <div class="form-grid">
+            <label class="field">
+              <span>Debounce ms</span>
+              <input id="debounceMs" type="number" min="300" max="2500" step="50" />
+            </label>
+            <label class="field">
+              <span>Min chars</span>
+              <input id="minChars" type="number" min="1" max="200" step="1" />
+            </label>
+            <label class="field wide">
+              <span>Back-translation language</span>
+              <select id="backTranslationLanguage" aria-label="Back-translation language"></select>
+            </label>
+          </div>
+        </section>
+
+        <section class="settings-group">
+          <div class="group-title">
+            <h2>AI enhance</h2>
+            <p>Không nhập key vẫn dùng Google Translate bình thường.</p>
+          </div>
+          <div class="form-grid single-column">
+            <label class="field">
+              <span>OpenAI API key</span>
+              <input id="apiKey" type="password" placeholder="sk-..." autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>Model</span>
+              <input id="model" type="text" placeholder="gpt-4o-mini" />
+            </label>
+          </div>
+        </section>
+
+        <footer class="settings-footer">
+          <button id="reset" class="ghost" type="button">Reset</button>
+          <button id="save" class="primary" type="button">Save changes</button>
+        </footer>
+      </section>
+
+      <div id="status" class="status-toast" role="status" aria-live="polite"></div>
+    </main>
+
+    <script src="languages.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>
