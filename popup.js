@@ -489,6 +489,24 @@ async function swapLanguages() {
   const source = sourceSelect.value || "Auto detect";
   const target = targetSelect.value || (activeTool === "write" ? settings.writeTargetLanguage : settings.targetLanguage) || "English";
 
+  // Swap input text and result text if a valid translation result exists
+  const inputEl = getActiveEl("input");
+  const resultEl = getActiveEl("resultText");
+  const resultPanel = getActiveEl("resultPanel");
+  
+  const currentInput = inputEl.value.trim();
+  const currentResult = resultEl.textContent.trim();
+  const hasResult = !resultPanel.classList.contains("is-empty") && 
+                    currentResult && 
+                    currentResult !== getTranslation("trans-result-placeholder") && 
+                    currentResult !== getTranslation("write-result-placeholder") &&
+                    currentResult !== getTranslation("result-empty");
+
+  if (hasResult) {
+    inputEl.value = currentResult;
+    updateCharacterCount();
+  }
+
   let nextSource = target;
   let nextTarget;
 
@@ -525,7 +543,7 @@ async function swapLanguages() {
     [targetKey]: nextTarget
   });
 
-  const inputVal = getActiveEl("input").value.trim();
+  const inputVal = inputEl.value.trim();
   if (inputVal) runPopupTool(false);
 }
 
