@@ -30,8 +30,8 @@
 
       <section id="mainView" class="view is-active" aria-label="InputBridge tools">
         <div class="tool-tabs" role="tablist" aria-label="Công cụ">
-          <button type="button" data-tool="translate" class="is-active">Translate</button>
-          <button type="button" data-tool="write">Write</button>
+          <button type="button" data-tool="translate" class="is-active" data-i18n="tool-tabs-translate">Translate</button>
+          <button type="button" data-tool="write" data-i18n="tool-tabs-write">Write</button>
         </div>
 
         <section class="translator-shell">
@@ -39,7 +39,7 @@
           <div id="translateTabContent" class="tab-content">
             <div id="transLanguageBar" class="language-bar">
               <label class="source-language">
-                <span>Source</span>
+                <span data-i18n="label-source">Source</span>
                 <select id="transSourceLanguage" aria-label="Source language"></select>
               </label>
               <button id="transSwapLanguages" class="language-swap" type="button" aria-label="Swap languages" title="Swap languages">
@@ -48,32 +48,32 @@
                 </svg>
               </button>
               <label class="target-language">
-                <span>Target</span>
+                <span data-i18n="label-target">Target</span>
                 <select id="transTargetLanguage" aria-label="Target language"></select>
               </label>
             </div>
 
             <div class="input-panel">
               <div class="panel-head">
-                <span id="transInputLabel">Text to translate</span>
-                <button id="transClearInput" class="text-button" type="button">Clear</button>
+                <span id="transInputLabel" data-i18n="trans-input-label">Text to translate</span>
+                <button id="transClearInput" class="text-button" type="button" data-i18n="trans-clear-btn">Clear</button>
               </div>
-              <textarea id="transInput" maxlength="5000" placeholder="Type or paste text here..."></textarea>
+              <textarea id="transInput" maxlength="5000" placeholder="Type or paste text here..." data-i18n="trans-input-placeholder"></textarea>
               <div class="input-footer">
                 <span id="transCharCount">0 / 5000</span>
-                <button id="transRunTool" class="primary compact-primary" type="button">Translate</button>
+                <button id="transRunTool" class="primary compact-primary" type="button" data-i18n="trans-run-btn">Translate</button>
               </div>
             </div>
 
             <div id="transResultPanel" class="result-panel is-empty" aria-live="polite">
               <div class="panel-head">
                 <div>
-                  <span id="transResultMeta">Result</span>
+                  <span id="transResultMeta" data-i18n="trans-result-meta">Result</span>
                   <small id="transResultPhonetic"></small>
                 </div>
-                <button id="transCopyResult" class="icon-text-button" type="button" disabled>Copy</button>
+                <button id="transCopyResult" class="icon-text-button" type="button" disabled data-i18n="trans-copy-btn">Copy</button>
               </div>
-              <div id="transResultText" class="result-text">Translation will appear here.</div>
+              <div id="transResultText" class="result-text" data-i18n="trans-result-placeholder">Translation will appear here.</div>
               <div id="transResultLoading" class="result-loading" hidden>
                 <span></span><span></span><span></span>
               </div>
@@ -82,7 +82,7 @@
             <section id="transDictionaryBlock" class="dictionary-block" hidden>
               <div class="dictionary-head">
                 <div>
-                  <span>Dictionary</span>
+                  <span data-i18n="trans-dict-title">Dictionary</span>
                   <strong id="transDictionaryHeadword"></strong>
                 </div>
               </div>
@@ -94,7 +94,7 @@
           <div id="writeTabContent" class="tab-content" hidden>
             <div id="writeLanguageBar" class="language-bar">
               <label class="source-language">
-                <span>Source</span>
+                <span data-i18n="label-source">Source</span>
                 <select id="writeSourceLanguage" aria-label="Source language"></select>
               </label>
               <button id="writeSwapLanguages" class="language-swap" type="button" aria-label="Swap languages" title="Swap languages">
@@ -103,39 +103,39 @@
                 </svg>
               </button>
               <label class="target-language">
-                <span>Target</span>
+                <span data-i18n="label-target">Target</span>
                 <select id="writeTargetLanguage" aria-label="Target language"></select>
               </label>
             </div>
 
             <div id="writeControls" class="write-controls">
-              <span class="control-label">Writing mode</span>
+              <span class="control-label" data-i18n="settings-mode-label">Writing mode</span>
               <div class="write-mode-tabs" role="tablist" aria-label="Writing mode">
-                <button type="button" data-write-mode="polish" class="is-active">Polish</button>
-                <button type="button" data-write-mode="clarify">Clarify</button>
+                <button type="button" data-write-mode="polish" class="is-active" data-i18n="write-run-btn-polish">Polish</button>
+                <button type="button" data-write-mode="clarify" data-i18n="write-run-btn-clarify">Clarify</button>
               </div>
             </div>
 
             <div class="input-panel">
               <div class="panel-head">
-                <span id="writeInputLabel">Text to rewrite</span>
-                <button id="writeClearInput" class="text-button" type="button">Clear</button>
+                <span id="writeInputLabel" data-i18n="write-input-label">Text to rewrite</span>
+                <button id="writeClearInput" class="text-button" type="button" data-i18n="write-clear-btn">Clear</button>
               </div>
-              <textarea id="writeInput" maxlength="5000" placeholder="Paste a rough sentence to make it cleaner..."></textarea>
+              <textarea id="writeInput" maxlength="5000" placeholder="Paste a rough sentence to make it cleaner..." data-i18n="write-input-placeholder-polish"></textarea>
               <div class="input-footer">
                 <span id="writeCharCount">0 / 5000</span>
-                <button id="writeRunTool" class="primary compact-primary" type="button">Polish</button>
+                <button id="writeRunTool" class="primary compact-primary" type="button" data-i18n="write-run-btn-polish">Polish</button>
               </div>
             </div>
 
             <div id="writeResultPanel" class="result-panel is-empty" aria-live="polite">
               <div class="panel-head">
                 <div>
-                  <span id="writeResultMeta">Result</span>
+                  <span id="writeResultMeta" data-i18n="write-result-meta">Result</span>
                 </div>
-                <button id="writeCopyResult" class="icon-text-button" type="button" disabled>Copy</button>
+                <button id="writeCopyResult" class="icon-text-button" type="button" disabled data-i18n="write-copy-btn">Copy</button>
               </div>
-              <div id="writeResultText" class="result-text">Rewritten text will appear here.</div>
+              <div id="writeResultText" class="result-text" data-i18n="write-result-placeholder">Rewritten text will appear here.</div>
               <div id="writeResultLoading" class="result-loading" hidden>
                 <span></span><span></span><span></span>
               </div>
@@ -145,10 +145,10 @@
 
         <section class="site-strip compact-site-strip">
           <div class="site-copy">
-            <span>Site hiện tại</span>
+            <span data-i18n="site-label">Site hiện tại</span>
             <strong id="siteName">Đang đọc...</strong>
           </div>
-          <button id="toggleSite" class="site-action" type="button">Tắt site</button>
+          <button id="toggleSite" class="site-action" type="button" data-i18n="site-btn-toggle-off">Tắt site</button>
         </section>
       </section>
 
@@ -160,35 +160,38 @@
             </svg>
           </button>
           <div>
-            <span class="eyebrow">Advanced</span>
-            <h1>Cài đặt</h1>
+            <span class="eyebrow" data-i18n="settings-eyebrow">Advanced</span>
+            <h1 data-i18n="settings-title">Cài đặt</h1>
           </div>
         </div>
 
         <section class="settings-group">
           <div class="group-title">
-            <h2>Xử lý mặc định</h2>
-            <p>Thiết lập cách InputBridge xử lý nội dung trong ô nhập trên web.</p>
+            <h2 data-i18n="settings-group-default">Xử lý mặc định</h2>
+            <p data-i18n="settings-desc-default">Thiết lập cách InputBridge xử lý nội dung trong ô nhập trên web.</p>
           </div>
           <div class="form-grid">
             <label class="field">
-              <span>Mode</span>
+              <span data-i18n="settings-mode-label">Mode</span>
               <select id="mode">
-                <option value="translate">Send as language</option>
-                <option value="polish">Polish bằng LLM</option>
-                <option value="clarify">Clarify bằng LLM</option>
+                <option value="translate" data-i18n="settings-mode-trans">Send as language</option>
+                <option value="polish" data-i18n="settings-mode-polish">Polish bằng LLM</option>
+                <option value="clarify" data-i18n="settings-mode-clarify">Clarify bằng LLM</option>
               </select>
             </label>
             <label class="field">
-              <span>Engine mặc định</span>
+              <span data-i18n="settings-engine-label">Engine mặc định</span>
               <select id="engine"><option value="google">Google Translate</option></select>
             </label>
             <label class="field">
-              <span>Ngôn ngữ đích mặc định (Target)</span>
-              <select id="targetLanguage" aria-label="Ngôn ngữ đích mặc định"></select>
+              <span data-i18n="settings-ui-lang-label">Ngôn ngữ hiển thị (UI Language)</span>
+              <select id="uiLanguage">
+                <option value="vi">Tiếng Việt</option>
+                <option value="en">English</option>
+              </select>
             </label>
             <label class="field">
-              <span>Tone khi bật LLM</span>
+              <span data-i18n="settings-tone-label">Tone khi bật LLM</span>
               <select id="tone">
                 <option value="natural">Natural</option>
                 <option value="casual">Casual</option>
@@ -199,37 +202,37 @@
               </select>
             </label>
             <label class="field">
-              <span>Auto behavior</span>
+              <span data-i18n="settings-auto-label">Auto behavior</span>
               <select id="autoMode">
-                <option value="preview">Preview only</option>
-                <option value="autoReplace">Auto replace sau khi ngừng gõ</option>
-                <option value="autoOnSend">Auto on Send thử nghiệm</option>
+                <option value="preview" data-i18n="settings-auto-preview">Preview only</option>
+                <option value="autoReplace" data-i18n="settings-auto-replace">Auto replace sau khi ngừng gõ</option>
+                <option value="autoOnSend" data-i18n="settings-auto-onsend">Auto on Send thử nghiệm</option>
               </select>
             </label>
           </div>
         </section>
 
         <section class="settings-group">
-          <div class="group-title"><h2>Preview và gửi</h2></div>
+          <div class="group-title"><h2 data-i18n="settings-group-preview">Preview và gửi</h2></div>
           <div class="settings-list">
             <label class="setting-row compact-row">
-              <span><strong>Live preview</strong><small>Xem nội dung xử lý ngay khi đang gõ</small></span>
+              <span><strong data-i18n="settings-live-label">Live preview</strong><small data-i18n="settings-live-desc">Xem nội dung xử lý ngay khi đang gõ</small></span>
               <span class="switch"><input id="livePreview" type="checkbox" /><span></span></span>
             </label>
             <label class="setting-row compact-row">
-              <span><strong>Tab để nhận preview</strong></span>
+              <span><strong data-i18n="settings-tab-accept">Tab để nhận preview</strong></span>
               <span class="switch"><input id="acceptWithTab" type="checkbox" /><span></span></span>
             </label>
             <label class="setting-row compact-row">
-              <span><strong>Hiện dịch ngược</strong></span>
+              <span><strong data-i18n="settings-show-back">Hiện dịch ngược</strong></span>
               <span class="switch"><input id="showBackTranslation" type="checkbox" /><span></span></span>
             </label>
             <label class="setting-row compact-row">
-              <span><strong>AI enhance sau Google dịch</strong></span>
+              <span><strong data-i18n="settings-ai-enhance">AI enhance sau Google dịch</strong></span>
               <span class="switch"><input id="aiEnhance" type="checkbox" /><span></span></span>
             </label>
             <label class="setting-row compact-row">
-              <span><strong>Demo mode</strong></span>
+              <span><strong data-i18n="settings-demo-mode">Demo mode</strong></span>
               <span class="switch"><input id="demoMode" type="checkbox" /><span></span></span>
             </label>
           </div>
@@ -237,57 +240,57 @@
 
         <section class="settings-group">
           <div class="group-title">
-            <h2>Selection translation</h2>
-            <p>Điều khiển icon dịch khi bôi đen văn bản.</p>
+            <h2 data-i18n="settings-group-select">Selection translation</h2>
+            <p data-i18n="settings-group-select-desc">Điều khiển icon dịch khi bôi đen văn bản.</p>
           </div>
           <div class="settings-list selection-master">
             <label class="setting-row compact-row">
-              <span><strong>Bật dịch văn bản được chọn</strong></span>
+              <span><strong data-i18n="settings-select-enable">Bật dịch văn bản được chọn</strong></span>
               <span class="switch"><input id="selectionTranslation" type="checkbox" /><span></span></span>
             </label>
           </div>
           <div class="form-grid separated">
             <label class="field wide">
-              <span>Trigger</span>
+              <span data-i18n="settings-trigger-label">Trigger</span>
               <select id="selectionTrigger">
-                <option value="icon">Click icon</option>
-                <option value="instant">Instant after selection</option>
+                <option value="icon" data-i18n="settings-trigger-icon">Click icon</option>
+                <option value="instant" data-i18n="settings-trigger-instant">Instant after selection</option>
               </select>
             </label>
             <label class="field">
-              <span>Minimum characters</span>
+              <span data-i18n="settings-min-chars-label">Minimum characters</span>
               <input id="selectionMinChars" type="number" min="1" max="20" step="1" />
             </label>
             <label class="field">
-              <span>Maximum characters</span>
+              <span data-i18n="settings-max-chars-label">Maximum characters</span>
               <input id="selectionMaxChars" type="number" min="20" max="5000" step="50" />
             </label>
           </div>
           <div class="settings-list separated">
             <label class="setting-row compact-row">
-              <span><strong>Giữ Shift để dịch ngay</strong></span>
+              <span><strong data-i18n="settings-shift-label">Giữ Shift để dịch ngay</strong></span>
               <span class="switch"><input id="selectionShiftTranslate" type="checkbox" /><span></span></span>
             </label>
             <label class="setting-row compact-row">
-              <span><strong>Cho phép trong ô nhập liệu</strong></span>
+              <span><strong data-i18n="settings-editable-label">Cho phép trong ô nhập liệu</strong></span>
               <span class="switch"><input id="selectionAllowEditable" type="checkbox" /><span></span></span>
             </label>
           </div>
         </section>
 
         <section class="settings-group">
-          <div class="group-title"><h2>Timing và dịch ngược</h2></div>
+          <div class="group-title"><h2 data-i18n="settings-group-timing">Timing và dịch ngược</h2></div>
           <div class="form-grid">
             <label class="field">
-              <span>Debounce ms</span>
+              <span data-i18n="settings-debounce-label">Debounce ms</span>
               <input id="debounceMs" type="number" min="300" max="2500" step="50" />
             </label>
             <label class="field">
-              <span>Min chars</span>
+              <span data-i18n="settings-min-chars-input-label">Min chars</span>
               <input id="minChars" type="number" min="1" max="200" step="1" />
             </label>
             <label class="field wide">
-              <span>Back-translation language</span>
+              <span data-i18n="settings-back-lang-label">Back-translation language</span>
               <select id="backTranslationLanguage" aria-label="Back-translation language"></select>
             </label>
           </div>
@@ -295,24 +298,24 @@
 
         <section class="settings-group">
           <div class="group-title">
-            <h2>AI enhance</h2>
-            <p>Không nhập key vẫn dùng Google Translate bình thường.</p>
+            <h2 data-i18n="settings-group-ai">AI enhance</h2>
+            <p data-i18n="settings-group-ai-desc">Không nhập key vẫn dùng Google Translate bình thường.</p>
           </div>
           <div class="form-grid single-column">
             <label class="field">
-              <span>OpenAI API key</span>
+              <span data-i18n="settings-api-label">OpenAI API key</span>
               <input id="apiKey" type="password" placeholder="sk-..." autocomplete="off" />
             </label>
             <label class="field">
-              <span>Model</span>
+              <span data-i18n="settings-model-label">Model</span>
               <input id="model" type="text" placeholder="gpt-4o-mini" />
             </label>
           </div>
         </section>
 
         <footer class="settings-footer">
-          <button id="reset" class="ghost" type="button">Reset</button>
-          <button id="save" class="primary" type="button">Save changes</button>
+          <button id="reset" class="ghost" type="button" data-i18n="settings-btn-reset">Reset</button>
+          <button id="save" class="primary" type="button" data-i18n="settings-btn-save">Save changes</button>
         </footer>
       </section>
 

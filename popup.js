@@ -1,5 +1,5 @@
 const DEFAULT_SETTINGS = {
-  settingsVersion: 8,
+  settingsVersion: 9,
   enabled: true,
   demoMode: false,
   engine: "google",
@@ -10,6 +10,7 @@ const DEFAULT_SETTINGS = {
   targetLanguage: "English",
   writeSourceLanguage: "Auto detect",
   writeTargetLanguage: "English",
+  uiLanguage: "vi",
   mode: "translate",
   tone: "natural",
   autoMode: "autoOnSend",
@@ -40,6 +41,7 @@ const fields = [
   "model",
   "sourceLanguage",
   "targetLanguage",
+  "uiLanguage",
   "mode",
   "tone",
   "autoMode",
@@ -256,11 +258,13 @@ function updateToolUi() {
   $("writeTabContent").hidden = translate;
 
   if (activeTool === "write") {
-    $("writeInputLabel").textContent = "Text to rewrite";
+    $("writeInputLabel").textContent = getTranslation("write-input-label");
     $("writeInput").placeholder = activeWriteMode === "polish"
-      ? "Paste a rough sentence to make it cleaner..."
-      : "Paste a sentence that needs to be clearer...";
-    $("writeRunTool").textContent = activeWriteMode === "polish" ? "Polish" : "Clarify";
+      ? getTranslation("write-input-placeholder-polish")
+      : getTranslation("write-input-placeholder-clarify");
+    $("writeRunTool").textContent = activeWriteMode === "polish"
+      ? getTranslation("write-run-btn-polish")
+      : getTranslation("write-run-btn-clarify");
   }
 
   render();
@@ -285,14 +289,15 @@ function render() {
   if ($("writeSourceLanguage")) $("writeSourceLanguage").value = settings.writeSourceLanguage || "Auto detect";
   if ($("writeTargetLanguage")) $("writeTargetLanguage").value = settings.writeTargetLanguage || "English";
 
-  $("siteName").textContent = activeOrigin || "Không đọc được site";
+  $("siteName").textContent = activeOrigin || getTranslation("site-unable-read");
 
   const siteEnabled = settings.siteOverrides?.[activeOrigin]?.enabled;
   const toggleSite = $("toggleSite");
   const disabled = siteEnabled === false;
-  toggleSite.textContent = disabled ? "Bật site" : "Tắt site";
+  toggleSite.textContent = disabled ? getTranslation("site-btn-toggle-on") : getTranslation("site-btn-toggle-off");
   toggleSite.classList.toggle("is-disabled", disabled);
 
+  localizeUI();
   syncCustomSelects();
 }
 
@@ -340,12 +345,12 @@ async function runPopupTool(manual = false) {
     if (requestId !== popupRequestId) return;
 
     if (!response?.ok) {
-      renderPopupError(response?.error || "Không xử lý được nội dung.");
+      renderPopupError(response?.error || getTranslation("status-error-failed"));
       return;
     }
 
     renderPopupResult(response.data || {});
-    if (manual) setStatus("Xong.");
+    if (manual) setStatus(getTranslation("status-done"));
   } catch (error) {
     if (requestId !== popupRequestId) return;
     renderPopupError(error?.message || String(error));
@@ -356,7 +361,7 @@ async function runPopupTool(manual = false) {
 
 function renderPopupResult(data) {
   const result = String(data.result || "").trim();
-  getActiveEl("resultText").textContent = result || "Không có kết quả.";
+  getActiveEl("resultText").textContent = result || getTranslation("result-empty");
   getActiveEl("resultPanel").classList.toggle("is-empty", !result);
   getActiveEl("copyResult").disabled = !result;
 
@@ -443,9 +448,9 @@ function clearPopupInput() {
 
 function clearPopupResult() {
   getActiveEl("resultText").textContent = activeTool === "translate"
-    ? "Translation will appear here."
-    : "Rewritten text will appear here.";
-  getActiveEl("resultMeta").textContent = "Result";
+    ? getTranslation("trans-result-placeholder")
+    : getTranslation("write-result-placeholder");
+  getActiveEl("resultMeta").textContent = getTranslation("trans-result-meta");
   if (activeTool === "translate") {
     $("transResultPhonetic").textContent = "";
   }
@@ -464,12 +469,12 @@ function updateCharacterCount() {
 
 async function copyPopupResult() {
   const text = getActiveEl("resultText").textContent;
-  if (!text || text.startsWith("Translation will appear") || text.startsWith("Rewritten text will appear") || text === "Không có kết quả." || text === "Error") return;
+  if (!text) return;
   try {
     await navigator.clipboard.writeText(text);
-    setStatus("Đã copy.");
+    setStatus(getTranslation("status-copied"));
   } catch {
-    setStatus("Không copy được.");
+    setStatus(getTranslation("status-copy-failed"));
   }
 }
 
@@ -538,7 +543,7 @@ async function persistQuickField(id) {
   settings[key] = value;
   await chrome.storage.sync.set({ [key]: value });
   await notifyTabs();
-  setStatus("Đã cập nhật.");
+  setStatus(getTranslation("status-updated"));
 }
 
 async function saveAdvanced() {
@@ -547,7 +552,7 @@ async function saveAdvanced() {
   settings = { ...settings, ...next };
   render();
   await notifyTabs();
-  setStatus("Đã lưu cài đặt.");
+  setStatus(getTranslation("status-saved"));
 }
 
 async function reset() {
@@ -555,7 +560,7 @@ async function reset() {
   settings = { ...DEFAULT_SETTINGS, siteOverrides: {} };
   render();
   await notifyTabs();
-  setStatus("Đã reset về mặc định.");
+  setStatus(getTranslation("status-reset"));
 }
 
 async function toggleCurrentSite() {
@@ -575,7 +580,7 @@ async function toggleCurrentSite() {
   await chrome.storage.sync.set({ siteOverrides });
   render();
   await notifyTabs();
-  setStatus(nextEnabled ? "Đã bật site này." : "Đã tắt site này.");
+  setStatus(getTranslation(nextEnabled ? "status-site-on" : "status-site-off"));
 }
 
 function collectSettings() {
@@ -619,7 +624,8 @@ async function loadSettings() {
         selectionMaxChars: Number(stored.selectionMaxChars || 1000),
         selectionCardTheme: stored.selectionCardTheme || "light",
         writeSourceLanguage: stored.writeSourceLanguage || "Auto detect",
-        writeTargetLanguage: stored.writeTargetLanguage || "English"
+        writeTargetLanguage: stored.writeTargetLanguage || "English",
+        uiLanguage: stored.uiLanguage || "vi"
       }
     : stored;
 
@@ -879,3 +885,237 @@ function setStatus(text) {
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
+
+function getTranslation(key) {
+  const lang = settings.uiLanguage || "vi";
+  return (TRANSLATIONS[lang] || TRANSLATIONS.vi)[key] || key;
+}
+
+function localizeUI() {
+  const lang = settings.uiLanguage || "vi";
+  const dict = TRANSLATIONS[lang] || TRANSLATIONS.vi;
+
+  document.querySelectorAll("[data-i18n]").forEach((el) => {
+    const key = el.dataset.i18n;
+    const value = dict[key];
+    if (!value) return;
+
+    if (el.tagName === "INPUT" && el.hasAttribute("placeholder")) {
+      el.placeholder = value;
+    } else {
+      el.textContent = value;
+    }
+  });
+
+  // Dynamic placeholders and inputs
+  const transInput = $("transInput");
+  if (transInput) {
+    transInput.placeholder = dict["trans-input-placeholder"];
+  }
+
+  const writeInput = $("writeInput");
+  if (writeInput) {
+    writeInput.placeholder = activeWriteMode === "polish"
+      ? dict["write-input-placeholder-polish"]
+      : dict["write-input-placeholder-clarify"];
+  }
+
+  const writeRunBtn = $("writeRunTool");
+  if (writeRunBtn) {
+    writeRunBtn.textContent = activeWriteMode === "polish"
+      ? dict["write-run-btn-polish"]
+      : dict["write-run-btn-clarify"];
+  }
+
+  // Update clear result default texts if they are empty
+  const transResultPanel = $("transResultPanel");
+  if (transResultPanel && transResultPanel.classList.contains("is-empty")) {
+    $("transResultText").textContent = dict["trans-result-placeholder"];
+    $("transResultMeta").textContent = dict["trans-result-meta"];
+  }
+
+  const writeResultPanel = $("writeResultPanel");
+  if (writeResultPanel && writeResultPanel.classList.contains("is-empty")) {
+    $("writeResultText").textContent = dict["write-result-placeholder"];
+    $("writeResultMeta").textContent = dict["trans-result-meta"];
+  }
+}
+
+const TRANSLATIONS = {
+  vi: {
+    "tool-tabs-translate": "Translate",
+    "tool-tabs-write": "Write",
+    "label-source": "Source",
+    "label-target": "Target",
+    "trans-input-label": "Text to translate",
+    "trans-clear-btn": "Clear",
+    "trans-input-placeholder": "Type or paste text here...",
+    "trans-run-btn": "Translate",
+    "trans-result-meta": "Result",
+    "trans-copy-btn": "Copy",
+    "trans-result-placeholder": "Translation will appear here.",
+    "trans-dict-title": "Dictionary",
+    
+    "write-input-label": "Text to rewrite",
+    "write-clear-btn": "Clear",
+    "write-input-placeholder-polish": "Paste a rough sentence to make it cleaner...",
+    "write-input-placeholder-clarify": "Paste a sentence that needs to be clearer...",
+    "write-run-btn-polish": "Polish",
+    "write-run-btn-clarify": "Clarify",
+    "write-result-meta": "Result",
+    "write-copy-btn": "Copy",
+    "write-result-placeholder": "Rewritten text will appear here.",
+    
+    "site-label": "Site hiện tại",
+    "site-btn-toggle-off": "Tắt site",
+    "site-btn-toggle-on": "Bật site",
+    "site-unable-read": "Không đọc được site",
+    
+    "settings-eyebrow": "Advanced",
+    "settings-title": "Cài đặt",
+    
+    "settings-group-default": "Xử lý mặc định",
+    "settings-desc-default": "Thiết lập cách InputBridge xử lý nội dung trong ô nhập trên web.",
+    "settings-mode-label": "Mode",
+    "settings-engine-label": "Engine mặc định",
+    "settings-ui-lang-label": "Ngôn ngữ hiển thị (UI)",
+    "settings-tone-label": "Tone khi bật LLM",
+    "settings-auto-label": "Auto behavior",
+    "settings-mode-trans": "Send as language",
+    "settings-mode-polish": "Polish bằng LLM",
+    "settings-mode-clarify": "Clarify bằng LLM",
+    "settings-auto-preview": "Preview only",
+    "settings-auto-replace": "Auto replace sau khi ngừng gõ",
+    "settings-auto-onsend": "Auto on Send thử nghiệm",
+    
+    "settings-group-preview": "Preview và gửi",
+    "settings-live-label": "Live preview",
+    "settings-live-desc": "Xem nội dung xử lý ngay khi đang gõ",
+    "settings-tab-accept": "Tab để nhận preview",
+    "settings-show-back": "Hiện dịch ngược",
+    "settings-ai-enhance": "AI enhance sau Google dịch",
+    "settings-demo-mode": "Demo mode",
+    
+    "settings-group-select": "Selection translation",
+    "settings-group-select-desc": "Điều khiển icon dịch khi bôi đen văn bản.",
+    "settings-select-enable": "Bật dịch văn bản được chọn",
+    "settings-trigger-label": "Trigger",
+    "settings-trigger-icon": "Click icon",
+    "settings-trigger-instant": "Instant after selection",
+    "settings-min-chars-label": "Minimum characters",
+    "settings-max-chars-label": "Maximum characters",
+    "settings-shift-label": "Giữ Shift để dịch ngay",
+    "settings-editable-label": "Cho phép trong ô nhập liệu",
+    
+    "settings-group-timing": "Timing và dịch ngược",
+    "settings-debounce-label": "Debounce ms",
+    "settings-min-chars-input-label": "Min chars",
+    "settings-back-lang-label": "Back-translation language",
+    
+    "settings-group-ai": "AI enhance",
+    "settings-group-ai-desc": "Không nhập key vẫn dùng Google Translate bình thường.",
+    "settings-api-label": "OpenAI API key",
+    "settings-model-label": "Model",
+    
+    "settings-btn-reset": "Reset",
+    "settings-btn-save": "Save changes",
+    
+    "status-updated": "Đã cập nhật.",
+    "status-done": "Xong.",
+    "status-copied": "Đã copy.",
+    "status-copy-failed": "Không copy được.",
+    "status-saved": "Đã lưu cài đặt.",
+    "status-reset": "Đã reset về mặc định.",
+    "status-site-on": "Đã bật site này.",
+    "status-site-off": "Đã tắt site này.",
+    "status-error-failed": "Không xử lý được nội dung."
+  },
+  en: {
+    "tool-tabs-translate": "Translate",
+    "tool-tabs-write": "Write",
+    "label-source": "Source",
+    "label-target": "Target",
+    "trans-input-label": "Text to translate",
+    "trans-clear-btn": "Clear",
+    "trans-input-placeholder": "Type or paste text here...",
+    "trans-run-btn": "Translate",
+    "trans-result-meta": "Result",
+    "trans-copy-btn": "Copy",
+    "trans-result-placeholder": "Translation will appear here.",
+    "trans-dict-title": "Dictionary",
+    
+    "write-input-label": "Text to rewrite",
+    "write-clear-btn": "Clear",
+    "write-input-placeholder-polish": "Paste a rough sentence to make it cleaner...",
+    "write-input-placeholder-clarify": "Paste a sentence that needs to be clearer...",
+    "write-run-btn-polish": "Polish",
+    "write-run-btn-clarify": "Clarify",
+    "write-result-meta": "Result",
+    "write-copy-btn": "Copy",
+    "write-result-placeholder": "Rewritten text will appear here.",
+    
+    "site-label": "Current site",
+    "site-btn-toggle-off": "Disable site",
+    "site-btn-toggle-on": "Enable site",
+    "site-unable-read": "Unable to read site",
+    
+    "settings-eyebrow": "Advanced",
+    "settings-title": "Settings",
+    
+    "settings-group-default": "Default Behavior",
+    "settings-desc-default": "Configure how InputBridge processes input on web pages.",
+    "settings-mode-label": "Mode",
+    "settings-engine-label": "Default Engine",
+    "settings-ui-lang-label": "Display Language (UI)",
+    "settings-tone-label": "Tone when LLM is active",
+    "settings-auto-label": "Auto behavior",
+    "settings-mode-trans": "Send as language",
+    "settings-mode-polish": "Polish with LLM",
+    "settings-mode-clarify": "Clarify with LLM",
+    "settings-auto-preview": "Preview only",
+    "settings-auto-replace": "Auto replace after typing stops",
+    "settings-auto-onsend": "Auto on Send (Experimental)",
+    
+    "settings-group-preview": "Preview & Send",
+    "settings-live-label": "Live preview",
+    "settings-live-desc": "See processed text in real time while typing",
+    "settings-tab-accept": "Tab key to accept preview",
+    "settings-show-back": "Show back-translation",
+    "settings-ai-enhance": "AI enhance after Google Translate",
+    "settings-demo-mode": "Demo mode",
+    
+    "settings-group-select": "Selection Translation",
+    "settings-group-select-desc": "Control translation icon when text is selected.",
+    "settings-select-enable": "Enable selection translation",
+    "settings-trigger-label": "Trigger",
+    "settings-trigger-icon": "Click icon",
+    "settings-trigger-instant": "Instant after selection",
+    "settings-min-chars-label": "Minimum characters",
+    "settings-max-chars-label": "Maximum characters",
+    "settings-shift-label": "Hold Shift to translate instantly",
+    "settings-editable-label": "Allow inside input fields",
+    
+    "settings-group-timing": "Timing & Back-translation",
+    "settings-debounce-label": "Debounce ms",
+    "settings-min-chars-input-label": "Min chars",
+    "settings-back-lang-label": "Back-translation language",
+    
+    "settings-group-ai": "AI Enhance",
+    "settings-group-ai-desc": "Standard Google Translate works without an API key.",
+    "settings-api-label": "OpenAI API key",
+    "settings-model-label": "Model",
+    
+    "settings-btn-reset": "Reset",
+    "settings-btn-save": "Save changes",
+    
+    "status-updated": "Updated.",
+    "status-done": "Done.",
+    "status-copied": "Copied.",
+    "status-copy-failed": "Copy failed.",
+    "status-saved": "Settings saved.",
+    "status-reset": "Reset to defaults.",
+    "status-site-on": "Site enabled.",
+    "status-site-off": "Site disabled.",
+    "status-error-failed": "Failed to process content."
+  }
+};

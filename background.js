@@ -3,7 +3,7 @@ import "./languages.js";
 const LANGUAGE_CATALOG = globalThis.InputBridgeLanguageCatalog;
 
 const DEFAULT_SETTINGS = {
-  settingsVersion: 8,
+  settingsVersion: 9,
   enabled: true,
   demoMode: false,
   engine: "google",
@@ -14,6 +14,7 @@ const DEFAULT_SETTINGS = {
   targetLanguage: "English",
   writeSourceLanguage: "Auto detect",
   writeTargetLanguage: "English",
+  uiLanguage: "vi",
   mode: "translate",
   tone: "natural",
   autoMode: "autoOnSend",
@@ -247,7 +248,8 @@ function migrateSettings(stored = {}) {
     selectionMaxChars: Number(stored.selectionMaxChars || 1000),
     selectionCardTheme: stored.selectionCardTheme || "light",
     writeSourceLanguage: stored.writeSourceLanguage || "Auto detect",
-    writeTargetLanguage: stored.writeTargetLanguage || "English"
+    writeTargetLanguage: stored.writeTargetLanguage || "English",
+    uiLanguage: stored.uiLanguage || "vi"
   };
 }
 
