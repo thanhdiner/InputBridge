@@ -197,7 +197,7 @@ function updateToolUi() {
   });
 
   const translate = activeTool === "translate";
-  $("translateControls").hidden = !translate;
+  $("translateControls").hidden = false;
   $("writeControls").hidden = translate;
   $("inputLabel").textContent = translate ? "Text to translate" : "Text to rewrite";
   $("popupInput").placeholder = translate

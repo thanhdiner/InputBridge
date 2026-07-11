@@ -352,6 +352,7 @@ button:active {
 }
 
 .write-controls {
+  margin-top: 9px;
   padding: 11px 12px;
   border-radius: 14px;
 }
