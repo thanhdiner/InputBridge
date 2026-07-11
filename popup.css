@@ -397,11 +397,11 @@ button:active {
 
 .panel-head {
   display: flex;
-  min-height: 39px;
+  min-height: 34px;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 9px 11px 6px;
+  padding: 7px 11px 4px;
 }
 
 .panel-head > span,
@@ -440,7 +440,7 @@ button:active {
 #writeInput {
   display: block;
   width: 100%;
-  min-height: 112px;
+  min-height: 72px;
   max-height: 180px;
   resize: none;
   padding: 4px 12px 10px;
@@ -459,11 +459,11 @@ button:active {
 
 .input-footer {
   display: flex;
-  min-height: 47px;
+  min-height: 40px;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 7px 10px 9px 12px;
+  padding: 6px 10px 7px 12px;
   border-top: 1px solid rgba(60, 60, 67, 0.07);
 }
 
@@ -507,8 +507,8 @@ button:active {
 
 .result-panel {
   position: relative;
-  min-height: 112px;
-  padding-bottom: 12px;
+  min-height: 72px;
+  padding-bottom: 10px;
 }
 
 .result-panel.is-empty .result-text {
