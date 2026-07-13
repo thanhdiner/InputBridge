@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "InputBridge",
-  "version": "0.2.13",
+  "version": "0.3.13",
   "description": "AI input overlay: live preview, Google Translate by default, optional LLM enhancement, and auto-replace inside web text fields.",
   "permissions": [
     "storage",
@@ -13,15 +13,28 @@
     "<all_urls>",
     "https://translate.googleapis.com/*",
     "https://translate.google.com/*",
-    "https://api.openai.com/*"
+    "https://api.openai.com/*",
+    "https://generativelanguage.googleapis.com/*"
   ],
   "background": {
     "service_worker": "background.js",
     "type": "module"
   },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
   "action": {
     "default_title": "InputBridge",
-    "default_popup": "popup.html"
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
   },
   "content_scripts": [
     {

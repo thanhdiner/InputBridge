@@ -29,8 +29,9 @@ Hoặc test luôn trên web bình thường như Gmail, Messenger web, Discord w
 ## Mode hiện có
 
 - `Translate`: chuyển text sang target language.
-- `Polish`: làm câu tự nhiên hơn.
+- `Improve`: làm câu tự nhiên hơn.
 - `Clarify`: làm ý rõ hơn.
+- `Fix grammar`, `Make shorter/longer`, `More formal/casual` trong tab Write.
 
 ## Auto behavior
 
@@ -71,13 +72,24 @@ Logic bảo vệ hiện tại:
 
 ## Dùng AI thật
 
+### 9Router local
+
 1. Bấm icon InputBridge trên thanh extension.
 2. Tắt **Demo mode**.
-3. Nhập OpenAI API key.
-4. Chọn model, target language, tone.
-5. Save.
+3. Chạy 9Router local (endpoint mặc định: `http://localhost:20128/v1`).
+4. Trong **AI provider**, giữ `9Router (local)` và model `mmf/mimo-auto`.
+5. Bật **AI enhance** rồi Save. Không cần API key cho cấu hình local này.
 
-API key đang lưu bằng `chrome.storage.sync`. Bản production nên chuyển sang backend riêng hoặc mã hóa/local vault, đừng để user/team dùng key thô nếu phát hành rộng.
+### Gemini direct
+
+1. Chọn `Gemini direct`.
+2. Dán Gemini API key lấy từ Google AI Studio.
+3. Chọn model gợi ý, mặc định là `gemini-3.5-flash`.
+4. Bật **AI enhance** rồi Save.
+
+Các model Gemini có sẵn trong gợi ý: `gemini-3.5-flash`, `gemini-3.1-flash-lite`, `gemini-3.1-pro-preview`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-2.5-pro`.
+
+Nếu chọn `OpenAI direct` hoặc `Gemini direct`, API key vẫn được lưu bằng `chrome.storage.sync`. Bản production nên chuyển sang backend riêng hoặc mã hóa/local vault, đừng để user/team dùng key thô nếu phát hành rộng.
 
 ## Privacy guard hiện tại
 

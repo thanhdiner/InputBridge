@@ -1,11 +1,13 @@
 const DEFAULT_SETTINGS = {
-  settingsVersion: 9,
+  settingsVersion: 19,
   enabled: true,
   demoMode: false,
   engine: "google",
   aiEnhance: false,
   apiKey: "",
-  model: "gpt-4o-mini",
+  llmProvider: "9router",
+  llmBaseUrl: "http://localhost:20128/v1",
+  model: "mmf/mimo-auto",
   sourceLanguage: "Auto detect",
   targetLanguage: "English",
   writeSourceLanguage: "Auto detect",
@@ -27,8 +29,50 @@ const DEFAULT_SETTINGS = {
   selectionMinChars: 2,
   selectionMaxChars: 1000,
   selectionCardTheme: "light",
+  videoSubtitleEnabled: false,
+  videoSubtitleBilingual: false,
+  videoSubtitleKeepOriginal: false,
+  videoSubtitleSourceLanguage: "auto",
+  videoSubtitleTargetLanguage: "Vietnamese",
+  videoSubtitleEngine: "google",
+  videoSubtitlePosition: "bottom",
+  videoSubtitleSyncOffsetMs: -450,
+  videoSubtitleFontSize: 22,
+  videoSubtitleSourceFontSize: 30,
+  videoSubtitleTranslationFontSize: 28,
+  videoSubtitleSourceColor: "#ffffff",
+  videoSubtitleTranslationColor: "#ffe37a",
+  videoSubtitleSourceBackground: "#000000",
+  videoSubtitleTranslationBackground: "#000000",
+  videoSubtitleSourceFontFamily: "sans",
+  videoSubtitleTranslationFontFamily: "sans",
+  videoSubtitleSourceFontWeight: 800,
+  videoSubtitleTranslationFontWeight: 800,
+  videoSubtitleSourceBackgroundOpacity: 0,
+  videoSubtitleTranslationBackgroundOpacity: 0,
+  videoSubtitleSourceRadius: 0,
+  videoSubtitleTranslationRadius: 0,
+  videoSubtitleSourceOutline: 2.5,
+  videoSubtitleTranslationOutline: 2.5,
   siteOverrides: {}
 };
+
+const GEMINI_MODEL_PRESETS = [
+  { value: "gemini-3.5-flash", label: "Gemini 3.5 Flash · recommended" },
+  { value: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash-Lite · fastest" },
+  { value: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro Preview · highest quality" },
+  { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+  { value: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash-Lite" },
+  { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro" }
+];
+
+const PROVIDER_DEFAULT_MODELS = {
+  "9router": "mmf/mimo-auto",
+  openai: "gpt-4.1-mini",
+  gemini: "gemini-3.5-flash"
+};
+
+const LLM_API_KEY_LIMIT = 5;
 
 const LANGUAGE_CATALOG = globalThis.InputBridgeLanguageCatalog;
 const $ = (id) => document.getElementById(id);
@@ -38,6 +82,8 @@ const fields = [
   "engine",
   "aiEnhance",
   "apiKey",
+  "llmProvider",
+  "llmBaseUrl",
   "model",
   "sourceLanguage",
   "targetLanguage",
@@ -56,9 +102,115 @@ const fields = [
   "selectionShiftTranslate",
   "selectionAllowEditable",
   "selectionMinChars",
-  "selectionMaxChars"
+  "selectionMaxChars",
+  "videoSubtitleEnabled",
+  "videoSubtitleBilingual",
+  "videoSubtitleTargetLanguage",
+  "videoSubtitleEngine",
+  "videoSubtitlePosition",
+  "videoSubtitleSyncOffsetMs",
+  "videoSubtitleSourceFontSize",
+  "videoSubtitleTranslationFontSize",
+  "videoSubtitleSourceColor",
+  "videoSubtitleTranslationColor",
+  "videoSubtitleSourceBackground",
+  "videoSubtitleTranslationBackground",
+  "videoSubtitleSourceFontFamily",
+  "videoSubtitleTranslationFontFamily",
+  "videoSubtitleSourceFontWeight",
+  "videoSubtitleTranslationFontWeight",
+  "videoSubtitleSourceBackgroundOpacity",
+  "videoSubtitleTranslationBackgroundOpacity",
+  "videoSubtitleSourceRadius",
+  "videoSubtitleTranslationRadius",
+  "videoSubtitleSourceOutline",
+  "videoSubtitleTranslationOutline"
 ];
 const quickFields = new Set(["enabled", "sourceLanguage", "targetLanguage"]);
+const VIDEO_SUBTITLE_POSITION_STORAGE_KEY = "videoSubtitlePositionsByOrigin";
+const VIDEO_SUBTITLE_STYLE_FIELD_IDS = Object.freeze([
+  "videoSubtitleSourceFontSize",
+  "videoSubtitleTranslationFontSize",
+  "videoSubtitleSourceColor",
+  "videoSubtitleTranslationColor",
+  "videoSubtitleSourceBackground",
+  "videoSubtitleTranslationBackground",
+  "videoSubtitleSourceFontFamily",
+  "videoSubtitleTranslationFontFamily",
+  "videoSubtitleSourceFontWeight",
+  "videoSubtitleTranslationFontWeight",
+  "videoSubtitleSourceBackgroundOpacity",
+  "videoSubtitleTranslationBackgroundOpacity",
+  "videoSubtitleSourceRadius",
+  "videoSubtitleTranslationRadius",
+  "videoSubtitleSourceOutline",
+  "videoSubtitleTranslationOutline"
+]);
+const VIDEO_SUBTITLE_STYLE_PRESETS = Object.freeze({
+  anime: Object.freeze({
+    label: "Anime",
+    values: Object.freeze({
+      videoSubtitleSourceFontSize: 30,
+      videoSubtitleTranslationFontSize: 28,
+      videoSubtitleSourceColor: "#ffffff",
+      videoSubtitleTranslationColor: "#ffe37a",
+      videoSubtitleSourceBackground: "#000000",
+      videoSubtitleTranslationBackground: "#000000",
+      videoSubtitleSourceFontFamily: "sans",
+      videoSubtitleTranslationFontFamily: "sans",
+      videoSubtitleSourceFontWeight: 800,
+      videoSubtitleTranslationFontWeight: 800,
+      videoSubtitleSourceBackgroundOpacity: 0,
+      videoSubtitleTranslationBackgroundOpacity: 0,
+      videoSubtitleSourceRadius: 0,
+      videoSubtitleTranslationRadius: 0,
+      videoSubtitleSourceOutline: 2.5,
+      videoSubtitleTranslationOutline: 2.5
+    })
+  }),
+  clean: Object.freeze({
+    label: "Tối giản",
+    values: Object.freeze({
+      videoSubtitleSourceFontSize: 26,
+      videoSubtitleTranslationFontSize: 22,
+      videoSubtitleSourceColor: "#ffffff",
+      videoSubtitleTranslationColor: "#cfeeff",
+      videoSubtitleSourceBackground: "#000000",
+      videoSubtitleTranslationBackground: "#000000",
+      videoSubtitleSourceFontFamily: "system",
+      videoSubtitleTranslationFontFamily: "system",
+      videoSubtitleSourceFontWeight: 700,
+      videoSubtitleTranslationFontWeight: 600,
+      videoSubtitleSourceBackgroundOpacity: 0,
+      videoSubtitleTranslationBackgroundOpacity: 0,
+      videoSubtitleSourceRadius: 0,
+      videoSubtitleTranslationRadius: 0,
+      videoSubtitleSourceOutline: 1.5,
+      videoSubtitleTranslationOutline: 1.5
+    })
+  }),
+  glass: Object.freeze({
+    label: "Khung kính",
+    values: Object.freeze({
+      videoSubtitleSourceFontSize: 24,
+      videoSubtitleTranslationFontSize: 20,
+      videoSubtitleSourceColor: "#ffffff",
+      videoSubtitleTranslationColor: "#8fd3ff",
+      videoSubtitleSourceBackground: "#111827",
+      videoSubtitleTranslationBackground: "#0b2538",
+      videoSubtitleSourceFontFamily: "system",
+      videoSubtitleTranslationFontFamily: "system",
+      videoSubtitleSourceFontWeight: 700,
+      videoSubtitleTranslationFontWeight: 600,
+      videoSubtitleSourceBackgroundOpacity: 78,
+      videoSubtitleTranslationBackgroundOpacity: 82,
+      videoSubtitleSourceRadius: 10,
+      videoSubtitleTranslationRadius: 10,
+      videoSubtitleSourceOutline: 1,
+      videoSubtitleTranslationOutline: 1
+    })
+  })
+});
 
 let settings = null;
 let activeOrigin = "";
@@ -69,6 +221,44 @@ let popupDebounceTimer = null;
 let lastPopupResult = "";
 let lastDetectedSourceLanguage = "";
 const customSelects = new Map();
+
+function parseApiKeys(value) {
+  return [...new Set(
+    String(value || "")
+      .split(/[\r\n,;]+/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+  )].slice(0, LLM_API_KEY_LIMIT);
+}
+
+function syncApiKeySlotsFromSettings() {
+  const keys = parseApiKeys(settings?.apiKey || $("apiKey")?.value || "");
+  document.querySelectorAll(".api-key-slot").forEach((input, index) => {
+    input.value = keys[index] || "";
+  });
+  if ($("apiKey")) $("apiKey").value = keys.join("\n");
+  updateApiKeyHint();
+}
+
+function syncApiKeyFieldFromSlots() {
+  const keys = parseApiKeys(
+    [...document.querySelectorAll(".api-key-slot")]
+      .map((input) => input.value)
+      .join("\n")
+  );
+  if ($("apiKey")) $("apiKey").value = keys.join("\n");
+  updateApiKeyHint();
+  return keys;
+}
+
+function updateApiKeyHint() {
+  const count = parseApiKeys($("apiKey")?.value || "").length;
+  const provider = $("llmProvider")?.value || settings?.llmProvider || DEFAULT_SETTINGS.llmProvider;
+  const suffix = provider === "9router"
+    ? "optional gateway keys"
+    : "round-robin + automatic quota failover";
+  if ($("apiKeyHint")) $("apiKeyHint").textContent = `${count}/${LLM_API_KEY_LIMIT} configured · ${suffix}`;
+}
 
 init();
 
@@ -93,7 +283,9 @@ function populateLanguageSelects() {
     "transSourceLanguage", "transTargetLanguage",
     "writeSourceLanguage", "writeTargetLanguage",
     "targetLanguage",
-    "backTranslationLanguage"
+    "backTranslationLanguage",
+    "videoSubtitleTargetLanguage",
+    "videoSubtitleQuickLanguage"
   ];
   for (const id of selectIds) {
     const select = $(id);
@@ -124,19 +316,20 @@ function bindEvents() {
   $("save").addEventListener("click", saveAdvanced);
   $("reset").addEventListener("click", reset);
   $("toggleSite").addEventListener("click", toggleCurrentSite);
+  $("toggleVideoSubtitles").addEventListener("click", toggleVideoSubtitles);
+  $("resetVideoSubtitlePositions")?.addEventListener("click", resetVideoSubtitlePositions);
 
   // Tab-specific actions
   $("transRunTool").addEventListener("click", () => runPopupTool(true));
   $("writeRunTool").addEventListener("click", () => runPopupTool(true));
+  $("writeRunToolSplit").addEventListener("click", () => runPopupTool(true));
 
   $("transClearInput").addEventListener("click", clearPopupInput);
-  $("writeClearInput").addEventListener("click", clearPopupInput);
 
   $("transCopyResult").addEventListener("click", copyPopupResult);
   $("writeCopyResult").addEventListener("click", copyPopupResult);
 
   $("transSwapLanguages").addEventListener("click", swapLanguages);
-  $("writeSwapLanguages").addEventListener("click", swapLanguages);
 
   document.querySelectorAll("[data-tool]").forEach((button) => {
     button.addEventListener("click", () => setActiveTool(button.dataset.tool));
@@ -144,6 +337,11 @@ function bindEvents() {
 
   document.querySelectorAll("[data-write-mode]").forEach((button) => {
     button.addEventListener("click", () => setWriteMode(button.dataset.writeMode));
+  });
+
+  $("writeModeMenu").addEventListener("click", toggleWriteModeMenu);
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest(".write-action-picker")) closeWriteModeMenu();
   });
 
   const setupInputListeners = (inputId) => {
@@ -155,7 +353,8 @@ function bindEvents() {
         clearPopupResult();
         return;
       }
-      schedulePopupRun();
+      if (inputId === "transInput") schedulePopupRun();
+      else clearPopupResult();
     });
 
     el.addEventListener("keydown", (event) => {
@@ -184,6 +383,19 @@ function bindEvents() {
     });
   }
 
+  for (const id of VIDEO_SUBTITLE_STYLE_FIELD_IDS) {
+    const el = $(id);
+    if (!el) continue;
+    el.addEventListener("input", updateVideoSubtitleStylePreview);
+    el.addEventListener("change", updateVideoSubtitleStylePreview);
+  }
+
+  document.querySelectorAll("[data-subtitle-preset]").forEach((button) => {
+    button.addEventListener("click", () => {
+      void applyVideoSubtitleStylePreset(button.dataset.subtitlePreset || "");
+    });
+  });
+
   // Quick languages change listeners
   const handleLanguageChange = async (settingsKey, selectId) => {
     const el = $(selectId);
@@ -202,8 +414,19 @@ function bindEvents() {
 
   $("transSourceLanguage").addEventListener("change", () => handleLanguageChange("sourceLanguage", "transSourceLanguage"));
   $("transTargetLanguage").addEventListener("change", () => handleLanguageChange("targetLanguage", "transTargetLanguage"));
-  $("writeSourceLanguage").addEventListener("change", () => handleLanguageChange("writeSourceLanguage", "writeSourceLanguage"));
-  $("writeTargetLanguage").addEventListener("change", () => handleLanguageChange("writeTargetLanguage", "writeTargetLanguage"));
+  $("videoSubtitleQuickLanguage").addEventListener("change", async () => {
+    const value = $("videoSubtitleQuickLanguage").value;
+    settings.videoSubtitleTargetLanguage = value;
+    $("videoSubtitleTargetLanguage").value = value;
+    await chrome.storage.sync.set({ videoSubtitleTargetLanguage: value });
+    await notifyTabs();
+    render();
+  });
+  $("llmProvider").addEventListener("change", () => updateLlmProviderUi(true));
+  document.querySelectorAll(".api-key-slot").forEach((input) => {
+    input.addEventListener("input", syncApiKeyFieldFromSlots);
+    input.addEventListener("change", syncApiKeyFieldFromSlots);
+  });
 }
 
 function openSettings() {
@@ -233,11 +456,43 @@ function setActiveTool(tool) {
 }
 
 function setWriteMode(mode) {
-  if (!mode || mode === activeWriteMode) return;
+  if (!mode) return;
+  if (mode === activeWriteMode) {
+    closeWriteModeMenu();
+    return;
+  }
   activeWriteMode = mode;
+  closeWriteModeMenu();
   updateToolUi();
-  const inputVal = getActiveEl("input").value.trim();
-  if (activeTool === "write" && inputVal) runPopupTool(false);
+}
+
+function toggleWriteModeMenu() {
+  const menu = $("writeModeMenuList");
+  const opening = menu.hidden;
+  menu.hidden = !opening;
+  $("writeModeMenu").setAttribute("aria-expanded", String(opening));
+}
+
+function closeWriteModeMenu() {
+  const menu = $("writeModeMenuList");
+  if (!menu) return;
+  menu.hidden = true;
+  $("writeModeMenu").setAttribute("aria-expanded", "false");
+}
+
+function getWriteModeLabel(mode = activeWriteMode) {
+  const lang = settings?.uiLanguage || "vi";
+  const dict = TRANSLATIONS[lang] || TRANSLATIONS.vi;
+  const keys = {
+    check: "write-mode-check",
+    polish: "write-mode-polish",
+    academic: "write-mode-academic",
+    friendly: "write-mode-friendly",
+    simplify: "write-mode-simplify",
+    detailed: "write-mode-detailed"
+  };
+  const key = keys[mode] || keys.polish;
+  return dict[key] || key;
 }
 
 function updateToolUi() {
@@ -250,21 +505,19 @@ function updateToolUi() {
   document.querySelectorAll("[data-write-mode]").forEach((button) => {
     const active = button.dataset.writeMode === activeWriteMode;
     button.classList.toggle("is-active", active);
-    button.setAttribute("aria-selected", String(active));
+    button.setAttribute("aria-checked", String(active));
   });
 
   const translate = activeTool === "translate";
   $("translateTabContent").hidden = !translate;
   $("writeTabContent").hidden = translate;
+  $("siteStrip").hidden = !translate;
+  $("videoSubtitleStrip").hidden = !translate;
 
   if (activeTool === "write") {
-    $("writeInputLabel").textContent = getTranslation("write-input-label");
-    $("writeInput").placeholder = activeWriteMode === "polish"
-      ? getTranslation("write-input-placeholder-polish")
-      : getTranslation("write-input-placeholder-clarify");
-    $("writeRunTool").textContent = activeWriteMode === "polish"
-      ? getTranslation("write-run-btn-polish")
-      : getTranslation("write-run-btn-clarify");
+    $("writeModeLabel").textContent = getWriteModeLabel();
+    const prefix = getTranslation("write-input-placeholder-prefix");
+    $("writeInput").placeholder = `${prefix} ${getWriteModeLabel().toLowerCase()}`;
   }
 
   render();
@@ -283,11 +536,11 @@ function render() {
     else el.value = value ?? "";
   }
 
+  syncApiKeySlotsFromSettings();
+
   // Load quick languages
   if ($("transSourceLanguage")) $("transSourceLanguage").value = settings.sourceLanguage || "Auto detect";
   if ($("transTargetLanguage")) $("transTargetLanguage").value = settings.targetLanguage || "English";
-  if ($("writeSourceLanguage")) $("writeSourceLanguage").value = settings.writeSourceLanguage || "Auto detect";
-  if ($("writeTargetLanguage")) $("writeTargetLanguage").value = settings.writeTargetLanguage || "English";
 
   $("siteName").textContent = activeOrigin || getTranslation("site-unable-read");
 
@@ -297,8 +550,179 @@ function render() {
   toggleSite.textContent = disabled ? getTranslation("site-btn-toggle-on") : getTranslation("site-btn-toggle-off");
   toggleSite.classList.toggle("is-disabled", disabled);
 
+  const videoEnabled = Boolean(settings.videoSubtitleEnabled);
+  const videoTarget = settings.videoSubtitleTargetLanguage || "Vietnamese";
+  if ($("videoSubtitleQuickLanguage")) $("videoSubtitleQuickLanguage").value = videoTarget;
+  const videoEngine = settings.videoSubtitleEngine === "gemini" ? "Gemini Flash-Lite" : "Google · fast";
+  $("videoSubtitleStatus").textContent = videoEnabled
+    ? `${videoTarget} · YouTube/Google`
+    : getTranslation("video-subtitle-status-off");
+  $("toggleVideoSubtitles").textContent = getTranslation(videoEnabled
+    ? "video-subtitle-btn-off"
+    : "video-subtitle-btn-on");
+  $("toggleVideoSubtitles").classList.toggle("is-disabled", videoEnabled);
+
   localizeUI();
+  updateVideoSubtitleStylePreview();
+  updateLlmProviderUi();
   syncCustomSelects();
+}
+
+async function applyVideoSubtitleStylePreset(name) {
+  const preset = VIDEO_SUBTITLE_STYLE_PRESETS[name];
+  if (!preset) return;
+
+  for (const [id, value] of Object.entries(preset.values)) {
+    const element = $(id);
+    if (element) element.value = String(value);
+  }
+  settings = { ...(settings || DEFAULT_SETTINGS), ...preset.values };
+  updateVideoSubtitleStylePreview();
+  syncCustomSelects();
+
+  await chrome.storage.sync.set({ ...preset.values });
+  await notifyTabs();
+  setStatus(`Đã áp dụng kiểu ${preset.label}.`);
+}
+
+function updateVideoSubtitlePresetState() {
+  for (const button of document.querySelectorAll("[data-subtitle-preset]")) {
+    const preset = VIDEO_SUBTITLE_STYLE_PRESETS[button.dataset.subtitlePreset || ""];
+    const active = Boolean(preset && Object.entries(preset.values).every(([id, value]) => {
+      const current = $(id)?.value ?? settings?.[id];
+      return String(current) === String(value);
+    }));
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", String(active));
+  }
+}
+
+function updateVideoSubtitleStylePreview() {
+  const preview = $("videoSubtitleStylePreview");
+  if (!preview) return;
+
+  const source = preview.querySelector('[data-role="source"]');
+  const translation = preview.querySelector('[data-role="translation"]');
+  const read = (id, fallback) => $(id)?.value || settings?.[id] || fallback;
+  const rgba = (hex, alpha, fallback) => {
+    const color = /^#[0-9a-f]{6}$/i.test(String(hex || "")) ? hex : fallback;
+    const raw = color.slice(1);
+    return `rgba(${Number.parseInt(raw.slice(0, 2), 16)}, ${Number.parseInt(raw.slice(2, 4), 16)}, ${Number.parseInt(raw.slice(4, 6), 16)}, ${alpha})`;
+  };
+  const fontFamily = (value) => ({
+    system: '-apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif',
+    sans: 'Arial, Helvetica, sans-serif',
+    serif: 'Georgia, "Times New Roman", serif',
+    mono: 'ui-monospace, "SFMono-Regular", Consolas, monospace'
+  }[value] || '-apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif');
+  const apply = (element, prefix, defaults) => {
+    if (!element) return;
+    const opacity = clamp(Number(read(`${prefix}BackgroundOpacity`, defaults.opacity)), 0, 100) / 100;
+    const outline = clamp(Number(read(`${prefix}Outline`, defaults.outline)), 0, 3);
+    element.style.fontSize = `${clamp(Number(read(`${prefix}FontSize`, defaults.size)), 14, 42)}px`;
+    element.style.fontFamily = fontFamily(read(`${prefix}FontFamily`, "system"));
+    element.style.fontWeight = String(clamp(Number(read(`${prefix}FontWeight`, defaults.weight)), 400, 800));
+    element.style.color = read(`${prefix}Color`, defaults.color);
+    const transparent = opacity <= 0.02;
+    element.style.background = rgba(read(`${prefix}Background`, defaults.background), opacity, defaults.background);
+    element.style.borderRadius = `${clamp(Number(read(`${prefix}Radius`, 10)), 0, 24)}px`;
+    element.style.webkitTextStroke = `${outline}px rgba(0, 0, 0, 0.92)`;
+    element.style.paintOrder = "stroke fill";
+    element.style.padding = transparent ? "3px 8px 4px" : "5px 10px 6px";
+    element.style.borderColor = transparent ? "transparent" : "rgba(255, 255, 255, 0.16)";
+    element.style.boxShadow = transparent ? "none" : "0 8px 24px rgba(0, 0, 0, 0.28)";
+    element.style.backdropFilter = transparent ? "none" : "blur(8px)";
+    element.style.webkitBackdropFilter = transparent ? "none" : "blur(8px)";
+    element.style.lineHeight = transparent ? "1.22" : "1.3";
+    element.style.textShadow = transparent
+      ? "0 2px 0 rgba(0,0,0,.98), 2px 0 0 rgba(0,0,0,.92), -2px 0 0 rgba(0,0,0,.92), 0 -1px 0 rgba(0,0,0,.92), 0 4px 7px rgba(0,0,0,.72)"
+      : "0 1px 3px rgba(0, 0, 0, 0.9)";
+  };
+
+  apply(source, "videoSubtitleSource", {
+    size: 24,
+    weight: 700,
+    opacity: 78,
+    outline: 1,
+    color: "#ffffff",
+    background: "#111827"
+  });
+  apply(translation, "videoSubtitleTranslation", {
+    size: 20,
+    weight: 600,
+    opacity: 82,
+    outline: 1,
+    color: "#8fd3ff",
+    background: "#0b2538"
+  });
+  updateVideoSubtitlePresetState();
+}
+
+function updateLlmProviderUi(providerChanged = false) {
+  const provider = $("llmProvider").value || DEFAULT_SETTINGS.llmProvider;
+  const using9Router = provider === "9router";
+  const usingGemini = provider === "gemini";
+  const endpointField = $("llmBaseUrlField");
+  const modelInput = $("model");
+  const previousProvider = modelInput.dataset.provider || settings?.llmProvider || DEFAULT_SETTINGS.llmProvider;
+  const currentModel = modelInput.value.trim();
+
+  if (endpointField) endpointField.hidden = !using9Router;
+  $("llmBaseUrl").disabled = !using9Router;
+
+  const apiKeySlots = [...document.querySelectorAll(".api-key-slot")];
+  if (using9Router) {
+    $("apiKeyLabel").textContent = "9Router gateway keys (optional)";
+    apiKeySlots.forEach((input, index) => {
+      input.placeholder = index === 0 ? "Optional gateway key" : `Optional key ${index + 1}`;
+    });
+  } else if (usingGemini) {
+    $("apiKeyLabel").textContent = "Gemini API keys (max 5)";
+    apiKeySlots.forEach((input, index) => {
+      input.placeholder = `Gemini key ${index + 1} · AIza...`;
+    });
+  } else {
+    $("apiKeyLabel").textContent = "OpenAI API keys (max 5)";
+    apiKeySlots.forEach((input, index) => {
+      input.placeholder = `OpenAI key ${index + 1} · sk-...`;
+    });
+  }
+  updateApiKeyHint();
+
+  if (providerChanged) {
+    const previousModels = previousProvider === "gemini"
+      ? GEMINI_MODEL_PRESETS.map((item) => item.value)
+      : [PROVIDER_DEFAULT_MODELS[previousProvider]].filter(Boolean);
+    if (!currentModel || previousModels.includes(currentModel)) {
+      modelInput.value = PROVIDER_DEFAULT_MODELS[provider] || "";
+    }
+  }
+
+  modelInput.dataset.provider = provider;
+  modelInput.placeholder = PROVIDER_DEFAULT_MODELS[provider] || "Enter model ID";
+  populateModelOptions(provider);
+}
+
+function populateModelOptions(provider) {
+  const datalist = $("modelOptions");
+  if (!datalist) return;
+
+  const presets = provider === "gemini"
+    ? GEMINI_MODEL_PRESETS
+    : [{
+        value: PROVIDER_DEFAULT_MODELS[provider] || "",
+        label: provider === "9router" ? "9Router default" : "OpenAI default"
+      }];
+
+  const fragment = document.createDocumentFragment();
+  for (const preset of presets) {
+    if (!preset.value) continue;
+    const option = document.createElement("option");
+    option.value = preset.value;
+    option.label = preset.label;
+    fragment.appendChild(option);
+  }
+  datalist.replaceChildren(fragment);
 }
 
 function schedulePopupRun() {
@@ -319,27 +743,47 @@ async function runPopupTool(manual = false) {
     return;
   }
 
+  if (activeTool === "write" && text.length < 4) {
+    if (manual) renderPopupError("Enter at least 4 characters to use Write.");
+    else clearPopupResult();
+    return;
+  }
+
   const requestId = ++popupRequestId;
   setResultLoading(true);
 
+  if (activeTool === "write") {
+    streamPopupTransform({
+      text,
+      mode: activeWriteMode,
+      tone: settings.tone,
+      targetLanguage: "Same language as the source text",
+      contextHint: "InputBridge popup writing tool"
+    }, (chunk) => {
+      if (requestId !== popupRequestId) return;
+      renderPopupResult(chunk);
+    }, (finalData) => {
+      if (requestId !== popupRequestId) return;
+      renderPopupResult(finalData);
+      setResultLoading(false);
+      if (manual) setStatus(getTranslation("status-done"));
+    }, (error) => {
+      if (requestId !== popupRequestId) return;
+      renderPopupError(error);
+      setResultLoading(false);
+    });
+    return;
+  }
+
   try {
-    const message = activeTool === "translate"
-      ? {
-          type: "IB_POPUP_TRANSLATE",
-          text,
-          sourceLanguage: $("transSourceLanguage").value,
-          targetLanguage: $("transTargetLanguage").value,
-          fallbackLanguage: settings.backTranslationLanguage,
-          maxChars: 5000
-        }
-      : {
-          type: "IB_TRANSFORM",
-          text,
-          mode: activeWriteMode,
-          tone: settings.tone,
-          targetLanguage: $("writeTargetLanguage").value,
-          contextHint: "InputBridge popup writing tool"
-        };
+    const message = {
+      type: "IB_POPUP_TRANSLATE",
+      text,
+      sourceLanguage: $("transSourceLanguage").value,
+      targetLanguage: $("transTargetLanguage").value,
+      fallbackLanguage: settings.backTranslationLanguage,
+      maxChars: 5000
+    };
 
     const response = await chrome.runtime.sendMessage(message);
     if (requestId !== popupRequestId) return;
@@ -359,6 +803,55 @@ async function runPopupTool(manual = false) {
   }
 }
 
+let popupStreamPort = null;
+
+function streamPopupTransform(message, onChunk, onDone, onError) {
+  if (popupStreamPort) {
+    try { popupStreamPort.disconnect(); } catch {}
+  }
+
+  try {
+    popupStreamPort = chrome.runtime.connect({ name: "ib-transform-stream" });
+    let hasFinished = false;
+    
+    popupStreamPort.onMessage.addListener((response) => {
+      if (!response.ok) {
+        hasFinished = true;
+        onError(response.error || "Streaming error");
+        if (popupStreamPort) {
+          popupStreamPort.disconnect();
+          popupStreamPort = null;
+        }
+        return;
+      }
+
+      const data = response.data || {};
+      if (data.done) {
+        hasFinished = true;
+        onDone(data);
+        if (popupStreamPort) {
+          popupStreamPort.disconnect();
+          popupStreamPort = null;
+        }
+      } else {
+        onChunk(data);
+      }
+    });
+
+    popupStreamPort.onDisconnect.addListener(() => {
+      popupStreamPort = null;
+      if (!hasFinished) {
+        onError("Kết nối với background page bị đóng.");
+      }
+    });
+
+    popupStreamPort.postMessage(message);
+  } catch (error) {
+    onError(error?.message || String(error));
+    popupStreamPort = null;
+  }
+}
+
 function renderPopupResult(data) {
   const result = String(data.result || "").trim();
   getActiveEl("resultText").textContent = result || getTranslation("result-empty");
@@ -373,11 +866,7 @@ function renderPopupResult(data) {
     $("transResultPhonetic").textContent = data.phonetic || "";
     renderDictionary(data);
   } else {
-    const modeKey = activeWriteMode === "polish" ? "mode-polished" : "mode-clarified";
-    const modeName = getTranslation(modeKey);
-    const toneVal = data.tone || settings.tone || "natural";
-    const toneName = getTranslation(`tone-${toneVal.toLowerCase()}`);
-    $("writeResultMeta").textContent = `${modeName} · ${toneName}`;
+    $("writeResultMeta").textContent = getWriteModeLabel();
     hideDictionary();
   }
 }
@@ -452,8 +941,10 @@ function clearPopupInput() {
 function clearPopupResult() {
   getActiveEl("resultText").textContent = activeTool === "translate"
     ? getTranslation("trans-result-placeholder")
-    : getTranslation("write-result-placeholder");
-  getActiveEl("resultMeta").textContent = getTranslation("trans-result-meta");
+    : "";
+  getActiveEl("resultMeta").textContent = activeTool === "translate"
+    ? getTranslation("trans-result-meta")
+    : "Result";
   if (activeTool === "translate") {
     $("transResultPhonetic").textContent = "";
   }
@@ -568,6 +1059,7 @@ async function persistQuickField(id) {
 }
 
 async function saveAdvanced() {
+  syncApiKeyFieldFromSlots();
   const next = collectSettings();
   await chrome.storage.sync.set(next);
   settings = { ...settings, ...next };
@@ -578,10 +1070,41 @@ async function saveAdvanced() {
 
 async function reset() {
   await chrome.storage.sync.set(DEFAULT_SETTINGS);
+  await chrome.storage.local.remove(VIDEO_SUBTITLE_POSITION_STORAGE_KEY);
   settings = { ...DEFAULT_SETTINGS, siteOverrides: {} };
   render();
   await notifyTabs();
+  await notifySubtitlePositionReset();
   setStatus(getTranslation("status-reset"));
+}
+
+async function resetVideoSubtitlePositions() {
+  try {
+    const stored = await chrome.storage.local.get(VIDEO_SUBTITLE_POSITION_STORAGE_KEY);
+    const positionsByOrigin = { ...(stored?.[VIDEO_SUBTITLE_POSITION_STORAGE_KEY] || {}) };
+    if (activeOrigin) delete positionsByOrigin[activeOrigin];
+    else Object.keys(positionsByOrigin).forEach((origin) => delete positionsByOrigin[origin]);
+    await chrome.storage.local.set({ [VIDEO_SUBTITLE_POSITION_STORAGE_KEY]: positionsByOrigin });
+    await notifySubtitlePositionReset(activeOrigin);
+    setStatus(getTranslation("status-video-position-reset"));
+  } catch (error) {
+    setStatus(error?.message || "Không đặt lại được vị trí.");
+  }
+}
+
+async function notifySubtitlePositionReset(origin = "") {
+  const tabs = await chrome.tabs.query({});
+  await Promise.all(tabs.map((tab) => {
+    if (!tab.id || !tab.url?.startsWith("http")) return null;
+    if (origin) {
+      try {
+        if (new URL(tab.url).origin !== origin) return null;
+      } catch {
+        return null;
+      }
+    }
+    return chrome.tabs.sendMessage(tab.id, { type: "IB_RESET_VIDEO_SUBTITLE_POSITIONS" }).catch(() => null);
+  }));
 }
 
 async function toggleCurrentSite() {
@@ -604,7 +1127,17 @@ async function toggleCurrentSite() {
   setStatus(getTranslation(nextEnabled ? "status-site-on" : "status-site-off"));
 }
 
+async function toggleVideoSubtitles() {
+  const nextEnabled = !settings.videoSubtitleEnabled;
+  settings.videoSubtitleEnabled = nextEnabled;
+  await chrome.storage.sync.set({ videoSubtitleEnabled: nextEnabled });
+  render();
+  await notifyTabs();
+  setStatus(getTranslation(nextEnabled ? "status-video-on" : "status-video-off"));
+}
+
 function collectSettings() {
+  syncApiKeyFieldFromSlots();
   const next = {};
 
   for (const id of fields) {
@@ -613,10 +1146,38 @@ function collectSettings() {
     next[id] = readFieldValue(el);
   }
 
+  next.apiKey = parseApiKeys(next.apiKey).join("\n");
   next.debounceMs = clamp(next.debounceMs || DEFAULT_SETTINGS.debounceMs, 300, 2500);
   next.minChars = clamp(next.minChars || DEFAULT_SETTINGS.minChars, 1, 200);
   next.selectionMinChars = clamp(next.selectionMinChars || DEFAULT_SETTINGS.selectionMinChars, 1, 20);
   next.selectionMaxChars = clamp(next.selectionMaxChars || DEFAULT_SETTINGS.selectionMaxChars, 20, 5000);
+  next.videoSubtitleSourceFontSize = clamp(Number(next.videoSubtitleSourceFontSize || DEFAULT_SETTINGS.videoSubtitleSourceFontSize), 14, 42);
+  next.videoSubtitleTranslationFontSize = clamp(Number(next.videoSubtitleTranslationFontSize || DEFAULT_SETTINGS.videoSubtitleTranslationFontSize), 14, 42);
+  next.videoSubtitleSourceFontWeight = clamp(Number(next.videoSubtitleSourceFontWeight || DEFAULT_SETTINGS.videoSubtitleSourceFontWeight), 400, 800);
+  next.videoSubtitleTranslationFontWeight = clamp(Number(next.videoSubtitleTranslationFontWeight || DEFAULT_SETTINGS.videoSubtitleTranslationFontWeight), 400, 800);
+  next.videoSubtitleSourceBackgroundOpacity = clamp(Number(next.videoSubtitleSourceBackgroundOpacity ?? DEFAULT_SETTINGS.videoSubtitleSourceBackgroundOpacity), 0, 100);
+  next.videoSubtitleTranslationBackgroundOpacity = clamp(Number(next.videoSubtitleTranslationBackgroundOpacity ?? DEFAULT_SETTINGS.videoSubtitleTranslationBackgroundOpacity), 0, 100);
+  next.videoSubtitleSourceRadius = clamp(Number(next.videoSubtitleSourceRadius ?? DEFAULT_SETTINGS.videoSubtitleSourceRadius), 0, 24);
+  next.videoSubtitleTranslationRadius = clamp(Number(next.videoSubtitleTranslationRadius ?? DEFAULT_SETTINGS.videoSubtitleTranslationRadius), 0, 24);
+  next.videoSubtitleSourceOutline = clamp(Number(next.videoSubtitleSourceOutline ?? DEFAULT_SETTINGS.videoSubtitleSourceOutline), 0, 3);
+  next.videoSubtitleTranslationOutline = clamp(Number(next.videoSubtitleTranslationOutline ?? DEFAULT_SETTINGS.videoSubtitleTranslationOutline), 0, 3);
+  for (const key of ["videoSubtitleSourceFontFamily", "videoSubtitleTranslationFontFamily"]) {
+    if (!["system", "sans", "serif", "mono"].includes(next[key])) next[key] = DEFAULT_SETTINGS[key];
+  }
+  for (const key of [
+    "videoSubtitleSourceColor",
+    "videoSubtitleTranslationColor",
+    "videoSubtitleSourceBackground",
+    "videoSubtitleTranslationBackground"
+  ]) {
+    if (!/^#[0-9a-f]{6}$/i.test(String(next[key] || ""))) next[key] = DEFAULT_SETTINGS[key];
+  }
+  next.videoSubtitleEngine = ["google", "gemini"].includes(next.videoSubtitleEngine)
+    ? next.videoSubtitleEngine
+    : DEFAULT_SETTINGS.videoSubtitleEngine;
+  next.videoSubtitlePosition = ["top", "bottom"].includes(next.videoSubtitlePosition)
+    ? next.videoSubtitlePosition
+    : DEFAULT_SETTINGS.videoSubtitlePosition;
   next.siteOverrides = settings.siteOverrides || {};
   return next;
 }
@@ -630,6 +1191,11 @@ function readFieldValue(el) {
 async function loadSettings() {
   const stored = await chrome.storage.sync.get(null);
   const needsMigration = Number(stored.settingsVersion || 0) < DEFAULT_SETTINGS.settingsVersion;
+  const enabledByV10Default =
+    Number(stored.settingsVersion || 0) === 10 &&
+    stored.aiEnhance === true &&
+    !parseApiKeys(stored.apiKey).length;
+  const upgradeVideoSubtitleStyle = Number(stored.settingsVersion || 0) < 19;
   const migrated = needsMigration
     ? {
         ...stored,
@@ -644,9 +1210,38 @@ async function loadSettings() {
         selectionMinChars: Number(stored.selectionMinChars || 2),
         selectionMaxChars: Number(stored.selectionMaxChars || 1000),
         selectionCardTheme: stored.selectionCardTheme || "light",
+        llmProvider: stored.llmProvider || "9router",
+        llmBaseUrl: stored.llmBaseUrl || "http://localhost:20128/v1",
+        model: stored.model || "mmf/mimo-auto",
+        aiEnhance: enabledByV10Default ? false : (stored.aiEnhance ?? false),
         writeSourceLanguage: stored.writeSourceLanguage || "Auto detect",
         writeTargetLanguage: stored.writeTargetLanguage || "English",
-        uiLanguage: stored.uiLanguage || "vi"
+        uiLanguage: stored.uiLanguage || "vi",
+        videoSubtitleEnabled: stored.videoSubtitleEnabled ?? false,
+        videoSubtitleBilingual: stored.videoSubtitleBilingual ?? false,
+        videoSubtitleKeepOriginal: false,
+        videoSubtitleSourceLanguage: stored.videoSubtitleSourceLanguage || "auto",
+        videoSubtitleTargetLanguage: stored.videoSubtitleTargetLanguage || "Vietnamese",
+        videoSubtitleEngine: stored.videoSubtitleEngine === "gemini" ? "gemini" : "google",
+        videoSubtitlePosition: stored.videoSubtitlePosition || "bottom",
+        videoSubtitleSyncOffsetMs: Number(stored.videoSubtitleSyncOffsetMs ?? -450),
+        videoSubtitleFontSize: Number(stored.videoSubtitleFontSize || 22),
+        videoSubtitleSourceFontSize: upgradeVideoSubtitleStyle ? 30 : Number(stored.videoSubtitleSourceFontSize || 30),
+        videoSubtitleTranslationFontSize: upgradeVideoSubtitleStyle ? 28 : Number(stored.videoSubtitleTranslationFontSize || 28),
+        videoSubtitleSourceColor: upgradeVideoSubtitleStyle ? "#ffffff" : (/^#[0-9a-f]{6}$/i.test(stored.videoSubtitleSourceColor || "") ? stored.videoSubtitleSourceColor : "#ffffff"),
+        videoSubtitleTranslationColor: upgradeVideoSubtitleStyle ? "#ffe37a" : (/^#[0-9a-f]{6}$/i.test(stored.videoSubtitleTranslationColor || "") ? stored.videoSubtitleTranslationColor : "#ffe37a"),
+        videoSubtitleSourceBackground: upgradeVideoSubtitleStyle ? "#000000" : (/^#[0-9a-f]{6}$/i.test(stored.videoSubtitleSourceBackground || "") ? stored.videoSubtitleSourceBackground : "#000000"),
+        videoSubtitleTranslationBackground: upgradeVideoSubtitleStyle ? "#000000" : (/^#[0-9a-f]{6}$/i.test(stored.videoSubtitleTranslationBackground || "") ? stored.videoSubtitleTranslationBackground : "#000000"),
+        videoSubtitleSourceFontFamily: upgradeVideoSubtitleStyle ? "sans" : (["system", "sans", "serif", "mono"].includes(stored.videoSubtitleSourceFontFamily) ? stored.videoSubtitleSourceFontFamily : "sans"),
+        videoSubtitleTranslationFontFamily: upgradeVideoSubtitleStyle ? "sans" : (["system", "sans", "serif", "mono"].includes(stored.videoSubtitleTranslationFontFamily) ? stored.videoSubtitleTranslationFontFamily : "sans"),
+        videoSubtitleSourceFontWeight: upgradeVideoSubtitleStyle ? 800 : Number(stored.videoSubtitleSourceFontWeight || 800),
+        videoSubtitleTranslationFontWeight: upgradeVideoSubtitleStyle ? 800 : Number(stored.videoSubtitleTranslationFontWeight || 800),
+        videoSubtitleSourceBackgroundOpacity: upgradeVideoSubtitleStyle ? 0 : Number(stored.videoSubtitleSourceBackgroundOpacity ?? 0),
+        videoSubtitleTranslationBackgroundOpacity: upgradeVideoSubtitleStyle ? 0 : Number(stored.videoSubtitleTranslationBackgroundOpacity ?? 0),
+        videoSubtitleSourceRadius: upgradeVideoSubtitleStyle ? 0 : Number(stored.videoSubtitleSourceRadius ?? 0),
+        videoSubtitleTranslationRadius: upgradeVideoSubtitleStyle ? 0 : Number(stored.videoSubtitleTranslationRadius ?? 0),
+        videoSubtitleSourceOutline: upgradeVideoSubtitleStyle ? 2.5 : Number(stored.videoSubtitleSourceOutline ?? 2.5),
+        videoSubtitleTranslationOutline: upgradeVideoSubtitleStyle ? 2.5 : Number(stored.videoSubtitleTranslationOutline ?? 2.5)
       }
     : stored;
 
@@ -833,6 +1428,7 @@ function updateCustomSelect(select) {
 }
 
 function openCustomSelect(wrapper, trigger, menu) {
+  menu.classList.remove("is-closing");
   wrapper.classList.add("is-open");
   trigger.setAttribute("aria-expanded", "true");
   menu.classList.add("is-portal-open");
@@ -859,7 +1455,7 @@ function positionPortalMenu(trigger, menu) {
   );
 
   menu.style.visibility = "hidden";
-  menu.style.left = `${left}px`;
+  menu.style.left = `${Math.round(left)}px`;
   menu.style.width = `${width}px`;
   menu.style.maxHeight = `${maxHeight}px`;
   menu.style.right = "auto";
@@ -869,7 +1465,7 @@ function positionPortalMenu(trigger, menu) {
     ? Math.max(viewportPadding, rect.top - gap - renderedHeight)
     : Math.min(window.innerHeight - viewportPadding - renderedHeight, rect.bottom + gap);
 
-  menu.style.top = `${top}px`;
+  menu.style.top = `${Math.round(top)}px`;
   menu.style.visibility = "";
   menu.dataset.placement = openAbove ? "top" : "bottom";
 }
@@ -881,10 +1477,26 @@ function closeCustomSelect(wrapper) {
 
   if (!parts) return;
   const { menu } = parts;
-  menu.classList.remove("is-portal-open");
-  menu.removeAttribute("data-placement");
-  menu.removeAttribute("style");
-  if (menu.parentElement !== wrapper) wrapper.appendChild(menu);
+
+  if (!menu.classList.contains("is-portal-open") || menu.classList.contains("is-closing")) {
+    return;
+  }
+
+  menu.classList.add("is-closing");
+
+  const cleanup = () => {
+    menu.removeEventListener("animationend", cleanup);
+    menu.removeEventListener("animationcancel", cleanup);
+    if (!menu.classList.contains("is-closing")) return;
+
+    menu.classList.remove("is-portal-open", "is-closing");
+    menu.removeAttribute("data-placement");
+    menu.removeAttribute("style");
+    if (menu.parentElement !== wrapper) wrapper.appendChild(menu);
+  };
+
+  menu.addEventListener("animationend", cleanup);
+  menu.addEventListener("animationcancel", cleanup);
 }
 
 function closeAllCustomSelects(except = null) {
@@ -936,16 +1548,8 @@ function localizeUI() {
 
   const writeInput = $("writeInput");
   if (writeInput) {
-    writeInput.placeholder = activeWriteMode === "polish"
-      ? dict["write-input-placeholder-polish"]
-      : dict["write-input-placeholder-clarify"];
-  }
-
-  const writeRunBtn = $("writeRunTool");
-  if (writeRunBtn) {
-    writeRunBtn.textContent = activeWriteMode === "polish"
-      ? dict["write-run-btn-polish"]
-      : dict["write-run-btn-clarify"];
+    const prefix = dict["write-input-placeholder-prefix"] || "Min 4 characters. Ctrl+Enter to";
+    writeInput.placeholder = `${prefix} ${getWriteModeLabel().toLowerCase()}`;
   }
 
   // Update clear result default texts if they are empty
@@ -957,8 +1561,8 @@ function localizeUI() {
 
   const writeResultPanel = $("writeResultPanel");
   if (writeResultPanel && writeResultPanel.classList.contains("is-empty")) {
-    $("writeResultText").textContent = dict["write-result-placeholder"];
-    $("writeResultMeta").textContent = dict["trans-result-meta"];
+    $("writeResultText").textContent = "";
+    $("writeResultMeta").textContent = "Result";
   }
 }
 
@@ -987,11 +1591,22 @@ const TRANSLATIONS = {
     "write-copy-btn": "Sao chép",
     "write-result-placeholder": "Kết quả viết lại sẽ xuất hiện tại đây.",
     "write-controls-label": "Chế độ viết",
+    "write-mode-check": "Kiểm tra",
+    "write-mode-polish": "Cải thiện",
+    "write-mode-academic": "Học thuật",
+    "write-mode-friendly": "Thân thiện",
+    "write-mode-simplify": "Đơn giản hóa",
+    "write-mode-detailed": "Chi tiết hơn",
+    "write-input-placeholder-prefix": "Tối thiểu 4 ký tự. Ctrl+Enter để",
     
     "site-label": "Site hiện tại",
     "site-btn-toggle-off": "Tắt site",
     "site-btn-toggle-on": "Bật site",
     "site-unable-read": "Không đọc được site",
+    "video-subtitle-label": "Phụ đề video",
+    "video-subtitle-status-off": "Đang tắt",
+    "video-subtitle-btn-on": "Bật phụ đề",
+    "video-subtitle-btn-off": "Tắt phụ đề",
     
     "settings-eyebrow": "Nâng cao",
     "settings-title": "Cài đặt",
@@ -1028,6 +1643,43 @@ const TRANSLATIONS = {
     "settings-max-chars-label": "Ký tự tối đa",
     "settings-shift-label": "Giữ Shift để dịch ngay",
     "settings-editable-label": "Cho phép trong ô nhập liệu",
+
+    "settings-group-video": "Phụ đề video trực tiếp",
+    "settings-group-video-desc": "Dịch phụ đề đang hiển thị trên YouTube và video HTML5 theo thời gian thực.",
+    "settings-video-enable": "Bật dịch phụ đề video",
+    "settings-video-enable-desc": "Tự bắt câu phụ đề mới và hiển thị bản dịch trên video.",
+    "settings-video-bilingual": "Hiển thị song ngữ",
+    "settings-video-bilingual-desc": "Hiện câu gốc phía trên bản dịch.",
+    "settings-video-keep-original": "Giữ phụ đề gốc của trình phát",
+    "settings-video-target": "Ngôn ngữ đích",
+    "settings-video-engine": "Chế độ dịch",
+    "settings-video-engine-fast": "Nhanh nhất · Google Translate",
+    "settings-video-engine-smart": "Tự nhiên hơn · Gemini Flash-Lite",
+    "settings-video-position": "Vị trí",
+    "settings-video-position-bottom": "Phía dưới",
+    "settings-video-position-top": "Phía trên",
+    "settings-video-font-size": "Cỡ chữ",
+    "settings-video-style-title": "Kiểu hiển thị phụ đề",
+    "settings-video-style-desc": "Chỉnh riêng font, độ đậm, màu, nền, độ trong, bo góc và viền chữ cho từng dòng. Hai dòng có thể kéo độc lập trên video.",
+    "settings-video-source-size": "Cỡ chữ gốc",
+    "settings-video-translation-size": "Cỡ chữ dịch",
+    "settings-video-source-color": "Màu chữ gốc",
+    "settings-video-translation-color": "Màu chữ dịch",
+    "settings-video-source-background": "Nền câu gốc",
+    "settings-video-translation-background": "Nền bản dịch",
+    "settings-video-source-font": "Font câu gốc",
+    "settings-video-translation-font": "Font bản dịch",
+    "settings-video-source-weight": "Độ đậm câu gốc",
+    "settings-video-translation-weight": "Độ đậm bản dịch",
+    "settings-video-source-opacity": "Độ trong nền gốc (%)",
+    "settings-video-translation-opacity": "Độ trong nền dịch (%)",
+    "settings-video-source-radius": "Bo góc câu gốc",
+    "settings-video-translation-radius": "Bo góc bản dịch",
+    "settings-video-source-outline": "Viền chữ câu gốc",
+    "settings-video-translation-outline": "Viền chữ bản dịch",
+    "settings-video-drag-hint": "Rê vào phụ đề rồi kéo tay nắm chấm ở bên trái. Hai dòng kéo độc lập; nhấp đúp tay nắm để đặt lại riêng dòng đó.",
+    "settings-video-reset-position": "Đặt lại vị trí",
+    "settings-video-note": "Chế độ Google cho phụ đề gần realtime. Gemini tự nhiên hơn nhưng thường chậm thêm một nhịp và vẫn tự rơi về Google khi lỗi.",
     
     "settings-group-timing": "Thời gian & Dịch ngược",
     "settings-debounce-label": "Thời gian trễ (ms)",
@@ -1050,6 +1702,9 @@ const TRANSLATIONS = {
     "status-reset": "Đã reset về mặc định.",
     "status-site-on": "Đã bật site này.",
     "status-site-off": "Đã tắt site này.",
+    "status-video-on": "Đã bật dịch phụ đề video.",
+    "status-video-off": "Đã tắt dịch phụ đề video.",
+    "status-video-position-reset": "Đã đặt lại vị trí phụ đề.",
     "status-error-failed": "Không xử lý được nội dung.",
 
     "mode-polished": "Đã làm mượt",
@@ -1085,11 +1740,22 @@ const TRANSLATIONS = {
     "write-copy-btn": "Copy",
     "write-result-placeholder": "Rewritten text will appear here.",
     "write-controls-label": "Writing mode",
+    "write-mode-check": "Check",
+    "write-mode-polish": "Improve",
+    "write-mode-academic": "Academy",
+    "write-mode-friendly": "Friendly",
+    "write-mode-simplify": "Simplify",
+    "write-mode-detailed": "More detailed",
+    "write-input-placeholder-prefix": "Min 4 characters. Ctrl+Enter to",
     
     "site-label": "Current site",
     "site-btn-toggle-off": "Disable site",
     "site-btn-toggle-on": "Enable site",
     "site-unable-read": "Unable to read site",
+    "video-subtitle-label": "Video subtitles",
+    "video-subtitle-status-off": "Off",
+    "video-subtitle-btn-on": "Enable",
+    "video-subtitle-btn-off": "Disable",
     
     "settings-eyebrow": "Advanced",
     "settings-title": "Settings",
@@ -1126,6 +1792,43 @@ const TRANSLATIONS = {
     "settings-max-chars-label": "Maximum characters",
     "settings-shift-label": "Hold Shift to translate instantly",
     "settings-editable-label": "Allow inside input fields",
+
+    "settings-group-video": "Live video subtitles",
+    "settings-group-video-desc": "Translate visible YouTube and HTML5 video captions in real time.",
+    "settings-video-enable": "Enable video subtitle translation",
+    "settings-video-enable-desc": "Watch for new caption lines and render a translation over the video.",
+    "settings-video-bilingual": "Show bilingual subtitles",
+    "settings-video-bilingual-desc": "Show the original line above the translation.",
+    "settings-video-keep-original": "Keep the player's original captions",
+    "settings-video-target": "Target language",
+    "settings-video-engine": "Translation mode",
+    "settings-video-engine-fast": "Fastest · Google Translate",
+    "settings-video-engine-smart": "More natural · Gemini Flash-Lite",
+    "settings-video-position": "Position",
+    "settings-video-position-bottom": "Bottom",
+    "settings-video-position-top": "Top",
+    "settings-video-font-size": "Font size",
+    "settings-video-style-title": "Subtitle appearance",
+    "settings-video-style-desc": "Customize font, weight, colors, opacity, radius, and text outline for each line. Drag the two lines independently over the video.",
+    "settings-video-source-size": "Original font size",
+    "settings-video-translation-size": "Translation font size",
+    "settings-video-source-color": "Original text color",
+    "settings-video-translation-color": "Translation text color",
+    "settings-video-source-background": "Original background",
+    "settings-video-translation-background": "Translation background",
+    "settings-video-source-font": "Original font",
+    "settings-video-translation-font": "Translation font",
+    "settings-video-source-weight": "Original weight",
+    "settings-video-translation-weight": "Translation weight",
+    "settings-video-source-opacity": "Original background opacity (%)",
+    "settings-video-translation-opacity": "Translation background opacity (%)",
+    "settings-video-source-radius": "Original corner radius",
+    "settings-video-translation-radius": "Translation corner radius",
+    "settings-video-source-outline": "Original text outline",
+    "settings-video-translation-outline": "Translation text outline",
+    "settings-video-drag-hint": "Hover a subtitle and drag the dotted handle on its left. Each line moves independently; double-click a handle to reset that line.",
+    "settings-video-reset-position": "Reset positions",
+    "settings-video-note": "Google mode is tuned for near-realtime captions. Gemini is more natural but usually adds latency and still falls back to Google on failure.",
     
     "settings-group-timing": "Timing & Back-translation",
     "settings-debounce-label": "Debounce ms",
@@ -1148,6 +1851,9 @@ const TRANSLATIONS = {
     "status-reset": "Reset to defaults.",
     "status-site-on": "Site enabled.",
     "status-site-off": "Site disabled.",
+    "status-video-on": "Video subtitle translation enabled.",
+    "status-video-off": "Video subtitle translation disabled.",
+    "status-video-position-reset": "Subtitle positions reset.",
     "status-error-failed": "Failed to process content.",
 
     "mode-polished": "Polished",

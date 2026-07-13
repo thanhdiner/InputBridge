@@ -10,12 +10,7 @@
     <main class="app">
       <header class="topbar">
         <button id="homeButton" class="brand" type="button" aria-label="Trang chính">
-          <span class="brand-mark">
-            <svg viewBox="0 0 30 30" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M9 8v14" />
-              <path d="M15 8h3.5a3.5 3.5 0 0 1 3.5 3.5v0a3.5 3.5 0 0 1-3.5 3.5H15h3.5a3.5 3.5 0 0 1 3.5 3.5v0a3.5 3.5 0 0 1-3.5 3.5H15V8z" />
-            </svg>
-          </span>
+          <img class="brand-logo" src="icons/icon128.png" alt="InputBridge logo" width="30" height="30" />
           <span class="brand-name">InputBridge</span>
         </button>
 
@@ -96,51 +91,42 @@
           </div>
 
           <!-- Write Tab Content -->
-          <div id="writeTabContent" class="tab-content" hidden>
-            <div id="writeLanguageBar" class="language-bar">
-              <label class="source-language">
-                <span data-i18n="label-source">Source</span>
-                <select id="writeSourceLanguage" aria-label="Source language"></select>
-              </label>
-              <button id="writeSwapLanguages" class="language-swap" type="button" aria-label="Swap languages" title="Swap languages">
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M7 7h11l-3-3M17 17H6l3 3" />
-                </svg>
-              </button>
-              <label class="target-language">
-                <span data-i18n="label-target">Target</span>
-                <select id="writeTargetLanguage" aria-label="Target language"></select>
-              </label>
-            </div>
-
-            <div id="writeControls" class="write-controls">
-              <span class="control-label" data-i18n="write-controls-label">Writing mode</span>
-              <div class="write-mode-tabs" role="tablist" aria-label="Writing mode">
-                <button type="button" data-write-mode="polish" class="is-active" data-i18n="write-run-btn-polish">Polish</button>
-                <button type="button" data-write-mode="clarify" data-i18n="write-run-btn-clarify">Clarify</button>
-              </div>
-            </div>
-
-            <div class="input-panel">
-              <div class="panel-head">
-                <span id="writeInputLabel" data-i18n="write-input-label">Text to rewrite</span>
-                <button id="writeClearInput" class="text-button" type="button" data-i18n="write-clear-btn">Clear</button>
-              </div>
-              <textarea id="writeInput" maxlength="5000" placeholder="Paste a rough sentence to make it cleaner..." data-i18n="write-input-placeholder-polish"></textarea>
-              <div class="input-footer">
-                <span id="writeCharCount">0 / 5000</span>
-                <button id="writeRunTool" class="primary compact-primary" type="button" data-i18n="write-run-btn-polish">Polish</button>
-              </div>
-            </div>
-
-            <div id="writeResultPanel" class="result-panel is-empty" aria-live="polite">
-              <div class="panel-head">
-                <div>
-                  <span id="writeResultMeta" data-i18n="write-result-meta">Result</span>
+          <div id="writeTabContent" class="tab-content write-workspace" hidden>
+            <div class="write-editor">
+              <textarea id="writeInput" maxlength="5000" placeholder="Min 4 characters. Ctrl+Enter to improve" data-i18n="write-input-placeholder-polish"></textarea>
+              <div class="write-toolbar">
+                <div class="write-action-picker">
+                  <div class="write-action-split">
+                    <button id="writeRunToolSplit" class="write-action-button-left" type="button" title="Cải thiện văn bản">
+                      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 18.5h5M10 21h4M8.4 14.7A6.5 6.5 0 1 1 15.6 14.7c-.85.72-1.35 1.45-1.45 2.3h-4.3c0-.85-.5-1.58-1.45-2.3Z" /><path d="M12 3.5v-1M4.58 6.58l-.71-.71M19.42 6.58l.71-.71M3.5 12h-1M21.5 12h-1" /></svg>
+                      <span id="writeModeLabel">Improve</span>
+                    </button>
+                    <button id="writeModeMenu" class="write-action-button-right" type="button" aria-haspopup="menu" aria-expanded="false" title="Chọn chế độ">
+                      <svg class="write-menu-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg>
+                    </button>
+                  </div>
+                  <button id="writeRunTool" class="write-refresh-button" type="button" aria-label="Run writing action" title="Run writing action">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.8-4.2L3 9M4 4v5h5M4 13a8 8 0 0 0 14.8 4.2L21 15M20 20v-5h-5" /></svg>
+                  </button>
+                  <div id="writeModeMenuList" class="write-mode-menu" role="menu" hidden>
+                    <button type="button" data-write-mode="check" role="menuitem"><svg viewBox="0 0 24 24" class="write-menu-svg"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg><span data-i18n="write-mode-check">Check</span></button>
+                    <button type="button" data-write-mode="polish" role="menuitem"><svg viewBox="0 0 24 24" class="write-menu-svg"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3z"/></svg><span data-i18n="write-mode-polish">Improve</span></button>
+                    <button type="button" data-write-mode="academic" role="menuitem"><svg viewBox="0 0 24 24" class="write-menu-svg"><path d="M22 10v6M2 10l10-5 10 5-10 5zM6 12v5c0 2 2.5 3 6 3s6-1 6-3v-5"/></svg><span data-i18n="write-mode-academic">Academy</span></button>
+                    <button type="button" data-write-mode="friendly" role="menuitem"><svg viewBox="0 0 24 24" class="write-menu-svg"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/></svg><span data-i18n="write-mode-friendly">Friendly</span></button>
+                    <button type="button" data-write-mode="simplify" role="menuitem"><svg viewBox="0 0 24 24" class="write-menu-svg"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="9.8" y1="8.2" x2="20" y2="17"/><line x1="9.8" y1="15.8" x2="20" y2="7"/></svg><span data-i18n="write-mode-simplify">Simplify</span></button>
+                    <button type="button" data-write-mode="detailed" role="menuitem"><svg viewBox="0 0 24 24" class="write-menu-svg"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg><span data-i18n="write-mode-detailed">More detailed</span></button>
+                  </div>
                 </div>
+                <span id="writeCharCount" class="write-char-count">0 / 5000</span>
+              </div>
+            </div>
+
+            <div id="writeResultPanel" class="write-result-panel is-empty" aria-live="polite">
+              <div class="write-result-head">
+                <span id="writeResultMeta">Result</span>
                 <button id="writeCopyResult" class="icon-text-button" type="button" disabled data-i18n="write-copy-btn">Copy</button>
               </div>
-              <div id="writeResultText" class="result-text" data-i18n="write-result-placeholder">Rewritten text will appear here.</div>
+              <div id="writeResultText" class="result-text"></div>
               <div id="writeResultLoading" class="result-loading" hidden>
                 <span></span><span></span><span></span>
               </div>
@@ -148,12 +134,23 @@
           </div>
         </section>
 
-        <section class="site-strip compact-site-strip">
+        <section id="siteStrip" class="site-strip compact-site-strip">
           <div class="site-copy">
             <span data-i18n="site-label">Site hiện tại</span>
             <strong id="siteName">Đang đọc...</strong>
           </div>
           <button id="toggleSite" class="site-action" type="button" data-i18n="site-btn-toggle-off">Tắt site</button>
+        </section>
+
+        <section id="videoSubtitleStrip" class="site-strip video-subtitle-strip">
+          <div class="site-copy">
+            <span data-i18n="video-subtitle-label">Phụ đề video</span>
+            <strong id="videoSubtitleStatus">Đang tắt</strong>
+          </div>
+          <div class="video-subtitle-actions">
+            <select id="videoSubtitleQuickLanguage" aria-label="Ngôn ngữ phụ đề video"></select>
+            <button id="toggleVideoSubtitles" class="site-action" type="button">Bật phụ đề</button>
+          </div>
         </section>
       </section>
 
@@ -284,8 +281,187 @@
         </section>
 
         <section class="settings-group">
+          <div class="group-title">
+            <h2 data-i18n="settings-group-video">Phụ đề video trực tiếp</h2>
+            <p data-i18n="settings-group-video-desc">Dịch phụ đề đang hiển thị trên YouTube và video HTML5 theo thời gian thực.</p>
+          </div>
+          <div class="settings-list">
+            <label class="setting-row compact-row">
+              <span><strong data-i18n="settings-video-enable">Bật dịch phụ đề video</strong><small data-i18n="settings-video-enable-desc">Tự bắt câu phụ đề mới và hiển thị bản dịch trên video.</small></span>
+              <span class="switch"><input id="videoSubtitleEnabled" type="checkbox" /><span></span></span>
+            </label>
+            <label class="setting-row compact-row">
+              <span><strong data-i18n="settings-video-bilingual">Hiển thị song ngữ</strong><small data-i18n="settings-video-bilingual-desc">Hiện câu gốc phía trên bản dịch.</small></span>
+              <span class="switch"><input id="videoSubtitleBilingual" type="checkbox" /><span></span></span>
+            </label>
+          </div>
+          <div class="form-grid separated">
+            <label class="field wide">
+              <span data-i18n="settings-video-engine">Chế độ dịch</span>
+              <select id="videoSubtitleEngine">
+                <option value="google" data-i18n="settings-video-engine-fast">Nhanh nhất · Google Translate</option>
+                <option value="gemini" data-i18n="settings-video-engine-smart">Tự nhiên hơn · Gemini Flash-Lite</option>
+              </select>
+            </label>
+            <label class="field wide">
+              <span data-i18n="settings-video-target">Ngôn ngữ đích</span>
+              <select id="videoSubtitleTargetLanguage" aria-label="Video subtitle target language"></select>
+            </label>
+            <label class="field">
+              <span data-i18n="settings-video-position">Vị trí</span>
+              <select id="videoSubtitlePosition">
+                <option value="bottom" data-i18n="settings-video-position-bottom">Phía dưới</option>
+                <option value="top" data-i18n="settings-video-position-top">Phía trên</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="subtitle-style-editor separated">
+            <div class="subtitle-style-heading">
+              <strong data-i18n="settings-video-style-title">Kiểu hiển thị phụ đề</strong>
+              <small data-i18n="settings-video-style-desc">Câu gốc nên nổi bật hơn. Chỉnh riêng cỡ chữ, màu chữ và màu nền cho từng dòng.</small>
+            </div>
+            <div class="subtitle-style-presets" role="group" aria-label="Mẫu giao diện phụ đề">
+              <button type="button" data-subtitle-preset="anime">Anime</button>
+              <button type="button" data-subtitle-preset="clean">Tối giản</button>
+              <button type="button" data-subtitle-preset="glass">Khung kính</button>
+            </div>
+            <div id="videoSubtitleStylePreview" class="subtitle-style-preview" aria-label="Video subtitle style preview">
+              <div data-role="source">This is the original subtitle.</div>
+              <div data-role="translation">Đây là bản dịch.</div>
+            </div>
+            <div class="form-grid subtitle-style-grid">
+              <label class="field">
+                <span data-i18n="settings-video-source-size">Cỡ chữ gốc</span>
+                <select id="videoSubtitleSourceFontSize">
+                  <option value="18">18 px</option>
+                  <option value="20">20 px</option>
+                  <option value="22">22 px</option>
+                  <option value="24">24 px</option>
+                  <option value="26">26 px</option>
+                  <option value="28">28 px</option>
+                  <option value="30">30 px</option>
+                  <option value="34">34 px</option>
+                </select>
+              </label>
+              <label class="field">
+                <span data-i18n="settings-video-translation-size">Cỡ chữ dịch</span>
+                <select id="videoSubtitleTranslationFontSize">
+                  <option value="16">16 px</option>
+                  <option value="18">18 px</option>
+                  <option value="20">20 px</option>
+                  <option value="22">22 px</option>
+                  <option value="24">24 px</option>
+                  <option value="26">26 px</option>
+                  <option value="28">28 px</option>
+                  <option value="30">30 px</option>
+                  <option value="32">32 px</option>
+                  <option value="34">34 px</option>
+                </select>
+              </label>
+              <label class="field color-field">
+                <span data-i18n="settings-video-source-color">Màu chữ gốc</span>
+                <input id="videoSubtitleSourceColor" type="color" value="#ffffff" />
+              </label>
+              <label class="field color-field">
+                <span data-i18n="settings-video-translation-color">Màu chữ dịch</span>
+                <input id="videoSubtitleTranslationColor" type="color" value="#8fd3ff" />
+              </label>
+              <label class="field color-field">
+                <span data-i18n="settings-video-source-background">Nền câu gốc</span>
+                <input id="videoSubtitleSourceBackground" type="color" value="#111827" />
+              </label>
+              <label class="field color-field">
+                <span data-i18n="settings-video-translation-background">Nền bản dịch</span>
+                <input id="videoSubtitleTranslationBackground" type="color" value="#0b2538" />
+              </label>
+              <label class="field">
+                <span data-i18n="settings-video-source-font">Font câu gốc</span>
+                <select id="videoSubtitleSourceFontFamily">
+                  <option value="system">System</option>
+                  <option value="sans">Sans</option>
+                  <option value="serif">Serif</option>
+                  <option value="mono">Mono</option>
+                </select>
+              </label>
+              <label class="field">
+                <span data-i18n="settings-video-translation-font">Font bản dịch</span>
+                <select id="videoSubtitleTranslationFontFamily">
+                  <option value="system">System</option>
+                  <option value="sans">Sans</option>
+                  <option value="serif">Serif</option>
+                  <option value="mono">Mono</option>
+                </select>
+              </label>
+              <label class="field">
+                <span data-i18n="settings-video-source-weight">Độ đậm câu gốc</span>
+                <select id="videoSubtitleSourceFontWeight">
+                  <option value="400">Regular</option>
+                  <option value="500">Medium</option>
+                  <option value="600">Semi Bold</option>
+                  <option value="700">Bold</option>
+                  <option value="800">Extra Bold</option>
+                </select>
+              </label>
+              <label class="field">
+                <span data-i18n="settings-video-translation-weight">Độ đậm bản dịch</span>
+                <select id="videoSubtitleTranslationFontWeight">
+                  <option value="400">Regular</option>
+                  <option value="500">Medium</option>
+                  <option value="600">Semi Bold</option>
+                  <option value="700">Bold</option>
+                  <option value="800">Extra Bold</option>
+                </select>
+              </label>
+              <label class="field range-field">
+                <span data-i18n="settings-video-source-opacity">Độ trong nền gốc (%)</span>
+                <input id="videoSubtitleSourceBackgroundOpacity" type="number" min="0" max="100" step="5" />
+              </label>
+              <label class="field range-field">
+                <span data-i18n="settings-video-translation-opacity">Độ trong nền dịch (%)</span>
+                <input id="videoSubtitleTranslationBackgroundOpacity" type="number" min="0" max="100" step="5" />
+              </label>
+              <label class="field">
+                <span data-i18n="settings-video-source-radius">Bo góc câu gốc</span>
+                <select id="videoSubtitleSourceRadius">
+                  <option value="0">0 px</option><option value="4">4 px</option><option value="8">8 px</option><option value="10">10 px</option><option value="14">14 px</option><option value="18">18 px</option><option value="24">24 px</option>
+                </select>
+              </label>
+              <label class="field">
+                <span data-i18n="settings-video-translation-radius">Bo góc bản dịch</span>
+                <select id="videoSubtitleTranslationRadius">
+                  <option value="0">0 px</option><option value="4">4 px</option><option value="8">8 px</option><option value="10">10 px</option><option value="14">14 px</option><option value="18">18 px</option><option value="24">24 px</option>
+                </select>
+              </label>
+              <label class="field">
+                <span data-i18n="settings-video-source-outline">Viền chữ câu gốc</span>
+                <select id="videoSubtitleSourceOutline">
+                  <option value="0">Tắt</option><option value="0.5">Mỏng</option><option value="1">Vừa</option><option value="1.5">Đậm</option><option value="2">Rất đậm</option><option value="2.5">Anime</option><option value="3">Cực đậm</option>
+                </select>
+              </label>
+              <label class="field">
+                <span data-i18n="settings-video-translation-outline">Viền chữ bản dịch</span>
+                <select id="videoSubtitleTranslationOutline">
+                  <option value="0">Tắt</option><option value="0.5">Mỏng</option><option value="1">Vừa</option><option value="1.5">Đậm</option><option value="2">Rất đậm</option><option value="2.5">Anime</option><option value="3">Cực đậm</option>
+                </select>
+              </label>
+            </div>
+            <div class="subtitle-position-controls">
+              <small data-i18n="settings-video-drag-hint">Rê vào phụ đề rồi kéo tay nắm chấm ở bên trái. Hai dòng kéo độc lập.</small>
+              <button id="resetVideoSubtitlePositions" class="ghost mini-ghost" type="button" data-i18n="settings-video-reset-position">Đặt lại vị trí</button>
+            </div>
+          </div>
+          <small class="field-hint video-subtitle-note" data-i18n="settings-video-note">Chế độ Google cho phụ đề gần realtime. Gemini tự nhiên hơn nhưng thường chậm thêm một nhịp và vẫn tự rơi về Google khi lỗi.</small>
+        </section>
+
+        <section class="settings-group">
           <div class="group-title"><h2 data-i18n="settings-group-timing">Timing và dịch ngược</h2></div>
           <div class="form-grid">
+            <label class="field">
+              <span>Đồng bộ phụ đề (ms)</span>
+              <input id="videoSubtitleSyncOffsetMs" type="number" min="-2000" max="2000" step="50" />
+              <small class="field-hint">Số âm = hiện sớm, số dương = hiện muộn.</small>
+            </label>
             <label class="field">
               <span data-i18n="settings-debounce-label">Debounce ms</span>
               <input id="debounceMs" type="number" min="300" max="2500" step="50" />
@@ -303,17 +479,38 @@
 
         <section class="settings-group">
           <div class="group-title">
-            <h2 data-i18n="settings-group-ai">AI enhance</h2>
-            <p data-i18n="settings-group-ai-desc">Không nhập key vẫn dùng Google Translate bình thường.</p>
+            <h2 data-i18n="settings-group-ai">AI provider</h2>
+            <p data-i18n="settings-group-ai-desc">Dùng 9Router local hoặc kết nối trực tiếp OpenAI / Gemini.</p>
           </div>
           <div class="form-grid single-column">
             <label class="field">
-              <span data-i18n="settings-api-label">OpenAI API key</span>
-              <input id="apiKey" type="password" placeholder="sk-..." autocomplete="off" />
+              <span>LLM provider</span>
+              <select id="llmProvider">
+                <option value="9router">9Router (local)</option>
+                <option value="openai">OpenAI direct</option>
+                <option value="gemini">Gemini direct</option>
+              </select>
             </label>
+            <label id="llmBaseUrlField" class="field">
+              <span>9Router endpoint</span>
+              <input id="llmBaseUrl" type="url" placeholder="http://localhost:20128/v1" autocomplete="off" />
+            </label>
+            <div class="field api-key-field">
+              <span id="apiKeyLabel" data-i18n="settings-api-label">API keys</span>
+              <input id="apiKey" type="hidden" />
+              <div id="apiKeyInputs" class="api-key-stack" aria-label="API keys">
+                <label class="api-key-row"><span>1</span><input class="api-key-slot" type="password" autocomplete="off" /></label>
+                <label class="api-key-row"><span>2</span><input class="api-key-slot" type="password" autocomplete="off" /></label>
+                <label class="api-key-row"><span>3</span><input class="api-key-slot" type="password" autocomplete="off" /></label>
+                <label class="api-key-row"><span>4</span><input class="api-key-slot" type="password" autocomplete="off" /></label>
+                <label class="api-key-row"><span>5</span><input class="api-key-slot" type="password" autocomplete="off" /></label>
+              </div>
+              <small id="apiKeyHint" class="field-hint">0/5 configured</small>
+            </div>
             <label class="field">
               <span data-i18n="settings-model-label">Model</span>
-              <input id="model" type="text" placeholder="gpt-4o-mini" />
+              <input id="model" type="text" list="modelOptions" placeholder="mmf/mimo-auto" autocomplete="off" />
+              <datalist id="modelOptions"></datalist>
             </label>
           </div>
         </section>

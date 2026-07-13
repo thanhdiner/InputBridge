@@ -4,6 +4,9 @@
   window[INPUTBRIDGE_FLAG] = true;
 
   const LANGUAGE_CATALOG = globalThis.InputBridgeLanguageCatalog;
+  const IS_TOP_FRAME = window === window.top;
+  const videoTrackBindings = new WeakSet();
+  const videoElementBindings = new WeakSet();
 
   const SKIP_INPUT_TYPES = new Set([
     "password",
@@ -27,6 +30,10 @@
   ]);
 
   const SHADOW_ATTACHED_EVENT = "__inputbridge_shadow_attached__";
+  const YT_CAPTION_REQUEST = "__inputbridge_request_youtube_captions__";
+  const YT_CAPTION_RESPONSE = "__inputbridge_youtube_captions__";
+  const VIDEO_SUBTITLE_PREFETCH_SECONDS = 28;
+  const VIDEO_SUBTITLE_PREFETCH_BATCH = 8;
   const observedRoots = new WeakSet();
   const rootObservers = new WeakMap();
   const inlineSelectOwners = new WeakSet();
@@ -48,7 +55,32 @@
     selectionAllowEditable: false,
     selectionMinChars: 2,
     selectionMaxChars: 1000,
-    selectionCardTheme: "light"
+    selectionCardTheme: "light",
+    videoSubtitleEnabled: false,
+    videoSubtitleBilingual: false,
+    videoSubtitleKeepOriginal: false,
+    videoSubtitleSourceLanguage: "auto",
+    videoSubtitleTargetLanguage: "Vietnamese",
+    videoSubtitleEngine: "google",
+    videoSubtitlePosition: "bottom",
+    videoSubtitleSyncOffsetMs: -450,
+    videoSubtitleFontSize: 22,
+    videoSubtitleSourceFontSize: 30,
+    videoSubtitleTranslationFontSize: 28,
+    videoSubtitleSourceColor: "#ffffff",
+    videoSubtitleTranslationColor: "#ffe37a",
+    videoSubtitleSourceBackground: "#000000",
+    videoSubtitleTranslationBackground: "#000000",
+    videoSubtitleSourceFontFamily: "sans",
+    videoSubtitleTranslationFontFamily: "sans",
+    videoSubtitleSourceFontWeight: 800,
+    videoSubtitleTranslationFontWeight: 800,
+    videoSubtitleSourceBackgroundOpacity: 0,
+    videoSubtitleTranslationBackgroundOpacity: 0,
+    videoSubtitleSourceRadius: 0,
+    videoSubtitleTranslationRadius: 0,
+    videoSubtitleSourceOutline: 2.5,
+    videoSubtitleTranslationOutline: 2.5
   };
 
   let settings = { ...BOOT_SETTINGS };
@@ -83,6 +115,92 @@
   let selectionExplanationError = "";
   let selectionIsFavorite = false;
   let selectionCardPlacement = "";
+  let videoSubtitleObserver = null;
+  let videoSubtitleEl = null;
+  let videoSubtitleTimer = null;
+  let videoSubtitleTimerDueAt = 0;
+  let videoSubtitleEmptyTimer = null;
+  let videoSubtitleKaraokeFrame = 0;
+  let videoSubtitleKaraokeLoopRunning = false;
+  let videoSubtitleKaraokeLastTick = 0;
+  let videoSubtitleKaraokeActiveIndex = -1;
+  let videoSubtitleLastCurrentTime = 0;
+  let currentVideoSubtitleCueId = "";
+  let videoSubtitleLiveKaraokeCandidate = "";
+  let videoSubtitleLiveKaraokeDisplayText = "";
+  let videoSubtitleLiveKaraokeCandidateWordCount = 0;
+  let videoSubtitleLiveKaraokeLastArrivalAt = 0;
+  let videoSubtitleLiveKaraokeMsPerWord = 245;
+  let videoSubtitleLiveKaraokeNextStepAt = 0;
+  let videoSubtitleLiveKaraokeTargetIndex = -1;
+  let videoSubtitleVadAudioContext = null;
+  let videoSubtitleVadStream = null;
+  let videoSubtitleVadSource = null;
+  let videoSubtitleVadHighpass = null;
+  let videoSubtitleVadLowpass = null;
+  let videoSubtitleVadAnalyser = null;
+  let videoSubtitleVadBuffer = null;
+  let videoSubtitleVadVideo = null;
+  let videoSubtitleVadRetryAfter = 0;
+  let videoSubtitleVadAvailable = false;
+  let videoSubtitleVadSpeaking = true;
+  let videoSubtitleVadNoiseFloor = 0.012;
+  let videoSubtitleVadPeak = 0.06;
+  let videoSubtitleVadRms = 0;
+  let videoSubtitleVadThreshold = 0.025;
+  let videoSubtitleVadSilenceSince = 0;
+  let videoSubtitleVadLastSampleAt = 0;
+  let videoSubtitleSpeechClockMs = 0;
+  let videoSubtitleSpeechClockLastAt = 0;
+  let videoPlayerCaptionCandidateText = "";
+  let videoPlayerCaptionCandidateChangedAt = 0;
+  let videoPlayerCaptionCandidateStartedAt = 0;
+  let videoPlayerCaptionCandidateSpeechClockStartedAt = 0;
+  let videoPlayerCaptionCommittedText = "";
+  let videoPlayerCaptionLastCommittedAt = 0;
+  let videoPlayerCaptionExpiredText = "";
+  let videoSubtitleRequestSeq = 0;
+  let lastVideoCaptionText = "";
+  let videoSubtitleEventsBound = false;
+  let videoSubtitleWordHoverTimer = null;
+  let videoSubtitleWordHoverSeq = 0;
+  let videoSubtitleWordHoverEl = null;
+  let videoSubtitleWordHoverEls = [];
+  let videoSubtitleWordHoverUsesPhrase = false;
+  let videoSubtitleSelectionActive = false;
+  let videoSubtitleDragPositions = null;
+  let videoSubtitlePositionLoadPromise = null;
+  let videoSubtitlePositionSaveTimer = null;
+  let videoSubtitleDragState = null;
+  let videoSubtitleHoverPauseState = null;
+  let videoSubtitleHoverResumeTimer = null;
+  const videoSubtitleWordCache = new Map();
+  let videoCaptionTimeline = [];
+  let videoCaptionTranslatedTimeline = [];
+  let videoCaptionTranslationEngine = "";
+  let videoCaptionUsesPlayerTrack = false;
+  let videoCaptionTimelineKey = "";
+  let videoCaptionTimelineRequestId = 0;
+  let videoCaptionTimelineRequestKey = "";
+  let videoCaptionTimelineLoading = false;
+  let videoCaptionTimelineRetryCount = 0;
+  let lastVideoCaptionTimelineIndex = -1;
+  let videoCaptionAvailableTracks = [];
+  let videoCaptionActiveSourceLanguageCode = "";
+  let youtubeVideoControlObserver = null;
+  let youtubeVideoControlSyncFrame = 0;
+  let youtubeVideoControlButtonEl = null;
+  let youtubeVideoControlPanelEl = null;
+  const videoCaptionTranslations = new Map();
+  const videoCaptionPending = new Set();
+  const VIDEO_PLAYER_CAPTION_INITIAL_COMMIT_MS = 70;
+  const VIDEO_PLAYER_CAPTION_REFRESH_MS = 240;
+  const VIDEO_SUBTITLE_KARAOKE_FRAME_MS = 48;
+  const VIDEO_SUBTITLE_SYNC_OFFSET = -0.08;
+  const VIDEO_SUBTITLE_VAD_SILENCE_HOLD_MS = 170;
+  const VIDEO_SUBTITLE_VAD_MIN_ENERGY = 0.004;
+  const VIDEO_SUBTITLE_LIVE_SYNC_LEAD_WORDS = 2.4;
+  const VIDEO_SUBTITLE_POSITION_STORAGE_KEY = "videoSubtitlePositionsByOrigin";
 
   init();
 
@@ -95,8 +213,10 @@
     getSettings().then((next) => {
       settings = { ...BOOT_SETTINGS, ...(next || {}) };
       primeActiveElement("settings-loaded");
+      syncVideoSubtitleFeature();
     }).catch(() => {
       primeActiveElement("settings-fallback");
+      stopVideoSubtitleFeature();
     });
   }
 
@@ -115,9 +235,18 @@
   function attachGlobalListeners() {
     window.addEventListener("scroll", onViewportScroll, true);
     window.addEventListener("resize", repositionAll, true);
+    window.addEventListener("resize", () => applyVideoSubtitleItemPositions(), true);
+    window.addEventListener("message", onVideoCaptionBridgeMessage);
+    document.addEventListener("pointerdown", onYouTubeControlDocumentPointerDown, true);
+    document.addEventListener("keydown", onYouTubeControlDocumentKeyDown, true);
+    document.addEventListener("yt-navigate-finish", onYouTubeVideoControlNavigation, true);
 
     chrome.runtime.onMessage.addListener((message) => {
       if (message?.type === "IB_SETTINGS_UPDATED") refreshSettings("settings-updated");
+      if (message?.type === "IB_RESET_VIDEO_SUBTITLE_POSITIONS") {
+        videoSubtitleDragPositions = null;
+        applyVideoSubtitleItemPositions();
+      }
     });
 
     chrome.storage?.onChanged?.addListener((changes, areaName) => {
@@ -129,11 +258,2675 @@
 
   function refreshSettings(reason) {
     getSettings().then((next) => {
+      const previousVideoTarget = settings.videoSubtitleTargetLanguage;
+      const previousVideoSource = settings.videoSubtitleSourceLanguage;
+      const previousVideoBilingual = Boolean(settings.videoSubtitleBilingual);
+      const previousVideoEngine = settings.videoSubtitleEngine;
       settings = { ...BOOT_SETTINGS, ...(next || {}) };
+      if (
+        (previousVideoTarget && previousVideoTarget !== settings.videoSubtitleTargetLanguage)
+        || (previousVideoSource && previousVideoSource !== settings.videoSubtitleSourceLanguage)
+        || previousVideoBilingual !== Boolean(settings.videoSubtitleBilingual)
+        || (previousVideoEngine && previousVideoEngine !== settings.videoSubtitleEngine)
+      ) {
+        videoCaptionTimeline = [];
+        videoCaptionTranslatedTimeline = [];
+        videoCaptionTranslationEngine = "";
+        videoCaptionUsesPlayerTrack = false;
+        videoCaptionTimelineKey = "";
+        videoCaptionTimelineRequestKey = "";
+        videoCaptionTimelineLoading = false;
+        videoCaptionTimelineRetryCount = 0;
+        resetYouTubeCaptionReader();
+        videoPlayerCaptionExpiredText = "";
+        videoCaptionTranslations.clear();
+        videoCaptionPending.clear();
+        hideVideoSubtitleOverlay();
+      }
       hidePreview();
       if (!settings.enabled || !settings.selectionTranslation) hideSelectionUi();
       primeActiveElement(reason);
+      syncVideoSubtitleFeature();
     }).catch(() => {});
+  }
+
+  function syncVideoSubtitleFeature() {
+    syncYouTubeVideoControl();
+    const active = Boolean(IS_TOP_FRAME && settings.enabled && settings.videoSubtitleEnabled);
+    setNativeVideoCaptionsHidden(active);
+    if (active) startVideoSubtitleFeature();
+    else stopVideoSubtitleFeature();
+  }
+
+  function startVideoSubtitleFeature() {
+    if (!IS_TOP_FRAME) return;
+    setNativeVideoCaptionsHidden(true);
+
+    if (!videoSubtitleObserver && document.documentElement) {
+      videoSubtitleObserver = new MutationObserver(() => {
+        bindVideoCaptionSources();
+        // Caption DOM already changed, so read it in the next task without an artificial wait.
+        scheduleVideoCaptionRead(0);
+      });
+      videoSubtitleObserver.observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+        characterData: true
+      });
+    }
+
+    if (!videoSubtitleEventsBound) {
+      videoSubtitleEventsBound = true;
+      document.addEventListener("yt-navigate-finish", onVideoSubtitleNavigation, true);
+      document.addEventListener("fullscreenchange", onVideoSubtitleFullscreen, true);
+      window.addEventListener("resize", onVideoSubtitleViewportChange, true);
+    }
+
+    bindVideoCaptionSources();
+    ensureYouTubeVideoControl();
+    ensureVideoSubtitleOverlay();
+    requestYouTubeCaptionTimeline();
+    scheduleVideoCaptionRead(0);
+  }
+
+  function stopVideoSubtitleFeature() {
+    videoSubtitleObserver?.disconnect();
+    videoSubtitleObserver = null;
+    clearTimeout(videoSubtitleTimer);
+    clearTimeout(videoSubtitleEmptyTimer);
+    videoSubtitleTimer = null;
+    videoSubtitleTimerDueAt = 0;
+    videoSubtitleEmptyTimer = null;
+    resetYouTubeCaptionReader();
+    videoPlayerCaptionExpiredText = "";
+    videoSubtitleRequestSeq += 1;
+    lastVideoCaptionText = "";
+    lastVideoCaptionTimelineIndex = -1;
+    videoCaptionTimeline = [];
+    videoCaptionTranslatedTimeline = [];
+    videoCaptionTranslationEngine = "";
+    videoCaptionUsesPlayerTrack = false;
+    videoCaptionTimelineKey = "";
+    videoCaptionTimelineRequestKey = "";
+    videoCaptionTimelineLoading = false;
+    videoCaptionTimelineRetryCount = 0;
+    videoCaptionTranslations.clear();
+    videoCaptionPending.clear();
+    setNativeVideoCaptionsHidden(false);
+    stopVideoSubtitleKaraokeLoop();
+    teardownVideoSubtitleAudioVad();
+    releaseVideoSubtitleHoverPause();
+    videoSubtitleEl?.remove();
+    videoSubtitleEl = null;
+  }
+
+  function onVideoSubtitleNavigation() {
+    if (!settings.videoSubtitleEnabled) return;
+    lastVideoCaptionText = "";
+    lastVideoCaptionTimelineIndex = -1;
+    videoCaptionTimeline = [];
+    videoCaptionTranslatedTimeline = [];
+    videoCaptionTranslationEngine = "";
+    videoCaptionUsesPlayerTrack = false;
+    videoCaptionTimelineKey = "";
+    videoCaptionTimelineRequestKey = "";
+    videoCaptionTimelineLoading = false;
+    videoCaptionTimelineRetryCount = 0;
+    resetYouTubeCaptionReader();
+    videoPlayerCaptionExpiredText = "";
+    videoCaptionTranslations.clear();
+    videoCaptionPending.clear();
+    setNativeVideoCaptionsHidden(true);
+    bindVideoCaptionSources();
+    ensureYouTubeVideoControl();
+    ensureVideoSubtitleOverlay();
+    window.setTimeout(requestYouTubeCaptionTimeline, 40);
+    scheduleVideoCaptionRead(0);
+  }
+
+  function onVideoSubtitleFullscreen() {
+    if (!settings.videoSubtitleEnabled) return;
+    ensureVideoSubtitleOverlay(true);
+    scheduleVideoCaptionRead(0);
+  }
+
+  function onVideoSubtitleViewportChange() {
+    if (!settings.videoSubtitleEnabled) return;
+    ensureVideoSubtitleOverlay(true);
+  }
+
+  function bindVideoCaptionSources() {
+    document.querySelectorAll("video").forEach((video) => {
+      if (!videoElementBindings.has(video)) {
+        videoElementBindings.add(video);
+        video.addEventListener("seeking", () => {
+          videoPlayerCaptionExpiredText = readYouTubeCaptionCandidate()
+            || videoPlayerCaptionCommittedText
+            || lastVideoCaptionText;
+          resetYouTubeCaptionReader();
+          lastVideoCaptionText = "";
+          hideVideoSubtitleOverlay();
+        });
+        video.addEventListener("seeked", () => {
+          resetYouTubeCaptionReader();
+          lastVideoCaptionText = "";
+          hideVideoSubtitleOverlay();
+          scheduleVideoCaptionRead(0);
+        });
+        video.addEventListener("loadedmetadata", () => {
+          requestYouTubeCaptionTimeline();
+          scheduleVideoCaptionRead(0);
+        });
+        video.addEventListener("timeupdate", () => scheduleVideoCaptionRead(0));
+        video.addEventListener("playing", () => {
+          requestYouTubeCaptionTimeline();
+          scheduleVideoCaptionRead(0);
+        });
+      }
+
+      for (const track of video.textTracks || []) {
+        if (videoTrackBindings.has(track)) continue;
+        videoTrackBindings.add(track);
+        track.addEventListener?.("cuechange", () => scheduleVideoCaptionRead(0));
+      }
+    });
+  }
+
+  function onVideoCaptionBridgeMessage(event) {
+    if (event.source !== window) return;
+    const data = event.data;
+    if (!data || data.source !== "inputbridge-main" || data.type !== YT_CAPTION_RESPONSE) return;
+    if (data.requestId !== videoCaptionTimelineRequestId) return;
+    videoCaptionTimelineLoading = false;
+
+    const normalizeTimeline = (items) => Array.isArray(items)
+      ? items
+          .map((cue) => ({
+            start: Number(cue?.start || 0),
+            end: Number(cue?.end || 0),
+            text: normalizeVideoCaptionText(cue?.text),
+            segments: Array.isArray(cue?.segments)
+              ? cue.segments.map((seg) => ({
+                  text: String(seg?.text || ""),
+                  offset: Number(seg?.offset || 0)
+                }))
+              : []
+          }))
+          .filter((cue) => cue.text && cue.end > cue.start)
+      : [];
+    const cues = normalizeTimeline(data.cues);
+    const translatedCues = normalizeTimeline(data.translatedCues);
+    const nextKey = `${data.videoId || location.href}\u0000${data.languageCode || ""}\u0000${data.targetLanguageCode || ""}`;
+
+    if (nextKey !== videoCaptionTimelineKey) {
+      videoCaptionTranslations.clear();
+      videoCaptionPending.clear();
+    }
+
+    videoCaptionTimelineKey = nextKey;
+    videoCaptionTimelineRetryCount = cues.length ? 0 : videoCaptionTimelineRetryCount + 1;
+    videoCaptionTimeline = cues;
+    videoCaptionTranslatedTimeline = translatedCues;
+    videoCaptionTranslationEngine = data.translationEngine || "";
+    videoCaptionUsesPlayerTrack = Boolean(data.playerTrackActivated);
+    videoCaptionAvailableTracks = Array.isArray(data.availableTracks) ? data.availableTracks : videoCaptionAvailableTracks;
+    videoCaptionActiveSourceLanguageCode = data.activeSourceLanguageCode || "";
+    lastVideoCaptionTimelineIndex = -1;
+    updateYouTubeVideoControl();
+    if (!videoCaptionTranslatedTimeline.length) {
+      const video = getPrimaryVideo();
+      const currentIndex = findTimelineCueIndex(Number(video?.currentTime || 0));
+      if (currentIndex >= 0) {
+        requestVideoCaptionCueTranslation(currentIndex);
+        window.setTimeout(() => prefetchVideoCaptionWindow(currentIndex + 1), 80);
+      } else {
+        prefetchVideoCaptionWindow(0);
+      }
+    }
+    scheduleVideoCaptionRead(0);
+    if (!cues.length && videoCaptionTimelineRetryCount <= 2) {
+      window.setTimeout(() => requestYouTubeCaptionTimeline(true), 900 * videoCaptionTimelineRetryCount);
+    }
+  }
+
+  function requestYouTubeCaptionTimeline(force = false) {
+    if (!IS_TOP_FRAME || !settings.enabled || !settings.videoSubtitleEnabled) return;
+    if (!/(^|\.)youtube\.com$/i.test(location.hostname)) return;
+
+    const targetLanguageCode = LANGUAGE_CATALOG?.codeFor(
+      settings.videoSubtitleTargetLanguage || "Vietnamese",
+      "vi"
+    ) || "vi";
+    const videoId = new URL(location.href).searchParams.get("v") || location.pathname;
+    const sourceLanguageCode = settings.videoSubtitleSourceLanguage || "auto";
+    const bilingualMode = settings.videoSubtitleBilingual ? "bilingual" : "translated";
+    const requestKey = `${videoId}\u0000${sourceLanguageCode}\u0000${targetLanguageCode}\u0000${bilingualMode}`;
+    if (!force && videoCaptionTimelineLoading && videoCaptionTimelineRequestKey === requestKey) return;
+    if (!force && videoCaptionTimelineRequestKey === requestKey && videoCaptionTimeline.length) return;
+
+    videoCaptionTimelineRequestKey = requestKey;
+    videoCaptionTimelineLoading = true;
+    const requestId = ++videoCaptionTimelineRequestId;
+    window.postMessage({
+      source: "inputbridge-content",
+      type: YT_CAPTION_REQUEST,
+      requestId,
+      targetLanguageCode,
+      sourceLanguageCode: settings.videoSubtitleSourceLanguage || "auto",
+      bilingual: Boolean(settings.videoSubtitleBilingual),
+      customTranslation: true
+    }, "*");
+  }
+
+  function getPrimaryVideo() {
+    return [...document.querySelectorAll("video")]
+      .filter((video) => video.readyState > 0)
+      .sort((left, right) => {
+        const leftRect = left.getBoundingClientRect();
+        const rightRect = right.getBoundingClientRect();
+        return (rightRect.width * rightRect.height) - (leftRect.width * leftRect.height);
+      })[0] || null;
+  }
+
+  function getVideoSubtitleSyncOffsetSeconds() {
+    return clampNumber(settings.videoSubtitleSyncOffsetMs, -2000, 2000, -450) / 1000;
+  }
+
+  function getVideoSubtitleLookupTime(time) {
+    // Negative offset means the subtitle should appear earlier.
+    return Number(time || 0) - getVideoSubtitleSyncOffsetSeconds();
+  }
+
+  function findTimelineCueIndex(time, timeline = videoCaptionTimeline) {
+    const lookupTime = getVideoSubtitleLookupTime(time);
+    let low = 0;
+    let high = timeline.length - 1;
+    let found = -1;
+
+    while (low <= high) {
+      const middle = (low + high) >> 1;
+      if (timeline[middle].start <= lookupTime + 0.03) {
+        found = middle;
+        low = middle + 1;
+      } else {
+        high = middle - 1;
+      }
+    }
+
+    if (found < 0) return -1;
+    const cue = timeline[found];
+    return lookupTime <= cue.end + 0.42 ? found : -1;
+  }
+
+  function scheduleNextTimelineCueRead(video, currentIndex, timeline = videoCaptionTimeline) {
+    if (!video || video.paused || video.seeking || !timeline.length) return;
+
+    const currentTime = Number(video.currentTime || 0);
+    const lookupTime = getVideoSubtitleLookupTime(currentTime);
+    let nextIndex = currentIndex >= 0 ? currentIndex + 1 : -1;
+
+    if (nextIndex < 0) {
+      let low = 0;
+      let high = timeline.length - 1;
+      while (low <= high) {
+        const middle = (low + high) >> 1;
+        if (timeline[middle].start > lookupTime + 0.01) {
+          nextIndex = middle;
+          high = middle - 1;
+        } else {
+          low = middle + 1;
+        }
+      }
+    }
+
+    if (nextIndex < 0 || nextIndex >= timeline.length) return;
+    const triggerTime = timeline[nextIndex].start + getVideoSubtitleSyncOffsetSeconds();
+    const delayMs = Math.max(0, (triggerTime - currentTime) * 1000);
+    // Long gaps are rechecked periodically so seek/rate changes cannot leave a stale timer.
+    scheduleVideoCaptionRead(Math.min(2000, delayMs <= 8 ? 0 : delayMs));
+  }
+
+  function getVideoCaptionTargetLanguageCode() {
+    return LANGUAGE_CATALOG?.codeFor(
+      settings.videoSubtitleTargetLanguage || "Vietnamese",
+      "vi"
+    ) || "vi";
+  }
+
+  function videoCaptionTargetMatchesSource() {
+    return Boolean(
+      videoCaptionActiveSourceLanguageCode
+      && sameLanguageCodeForUi(videoCaptionActiveSourceLanguageCode, getVideoCaptionTargetLanguageCode())
+    );
+  }
+
+  function getVideoCaptionCacheKey(text, cueStart = "live") {
+    return `${settings.videoSubtitleEngine || "google"}\u0000${settings.videoSubtitleTargetLanguage || "Vietnamese"}\u0000${videoCaptionActiveSourceLanguageCode || settings.videoSubtitleSourceLanguage || "auto"}\u0000${cueStart}\u0000${text}`;
+  }
+
+  function getVideoCaptionCueContext(index) {
+    return {
+      contextBefore: normalizeVideoCaptionText(videoCaptionTimeline[index - 1]?.text || ""),
+      contextAfter: normalizeVideoCaptionText(videoCaptionTimeline[index + 1]?.text || "")
+    };
+  }
+
+  function getVideoCaptionCueCacheKey(index) {
+    const cue = videoCaptionTimeline[index];
+    return cue ? getVideoCaptionCacheKey(cue.text, cue.start.toFixed(3)) : "";
+  }
+
+  function requestVideoCaptionTranslation(text, {
+    key = "",
+    contextBefore = "",
+    contextAfter = ""
+  } = {}) {
+    const normalized = normalizeVideoCaptionText(text);
+    if (!normalized) return;
+
+    const cacheKey = key || getVideoCaptionCacheKey(normalized);
+    if (videoCaptionTranslations.has(cacheKey) || videoCaptionPending.has(cacheKey)) return;
+    videoCaptionPending.add(cacheKey);
+
+    void sendMessage({
+      type: "IB_TRANSLATE_VIDEO_CAPTION",
+      text: normalized,
+      contextBefore,
+      contextAfter,
+      sourceLanguage: videoCaptionActiveSourceLanguageCode || settings.videoSubtitleSourceLanguage || "auto",
+      targetLanguage: settings.videoSubtitleTargetLanguage || "Vietnamese",
+      origin: getPageOrigin()
+    }).then((response) => {
+      if (!response?.ok || !response?.data?.result) return;
+      videoCaptionTranslations.set(cacheKey, {
+        result: response.data.result,
+        engine: response.data.engine || ""
+      });
+    }).finally(() => {
+      videoCaptionPending.delete(cacheKey);
+      scheduleVideoCaptionRead(0);
+    });
+  }
+
+  function requestVideoCaptionCueTranslation(index) {
+    const cue = videoCaptionTimeline[index];
+    if (!cue || videoCaptionTargetMatchesSource()) return;
+    requestVideoCaptionTranslation(cue.text, {
+      key: getVideoCaptionCueCacheKey(index),
+      ...getVideoCaptionCueContext(index)
+    });
+  }
+
+  function prefetchVideoCaptionWindow(startIndex = 0) {
+    if (!videoCaptionTimeline.length || videoCaptionTranslatedTimeline.length) return;
+
+    const targetLanguageCode = LANGUAGE_CATALOG?.codeFor(
+      settings.videoSubtitleTargetLanguage || "Vietnamese",
+      "vi"
+    ) || "vi";
+    if (sameLanguageCodeForUi(videoCaptionActiveSourceLanguageCode, targetLanguageCode)) return;
+
+    const video = getPrimaryVideo();
+    const currentTime = Number(video?.currentTime || 0);
+    const endTime = currentTime + VIDEO_SUBTITLE_PREFETCH_SECONDS;
+    const items = [];
+
+    for (let index = Math.max(0, startIndex); index < videoCaptionTimeline.length; index += 1) {
+      const cue = videoCaptionTimeline[index];
+      if (cue.start > endTime && items.length) break;
+      const key = getVideoCaptionCueCacheKey(index);
+      if (videoCaptionTranslations.has(key) || videoCaptionPending.has(key)) continue;
+      videoCaptionPending.add(key);
+      items.push({
+        id: key,
+        text: cue.text,
+        ...getVideoCaptionCueContext(index),
+        sourceLanguage: videoCaptionActiveSourceLanguageCode || settings.videoSubtitleSourceLanguage || "auto"
+      });
+      if (items.length >= VIDEO_SUBTITLE_PREFETCH_BATCH) break;
+    }
+
+    if (!items.length) return;
+
+    void sendMessage({
+      type: "IB_TRANSLATE_VIDEO_CAPTION_BATCH",
+      items,
+      targetLanguage: settings.videoSubtitleTargetLanguage || "Vietnamese",
+      origin: getPageOrigin()
+    }).then((response) => {
+      for (const item of response?.data?.items || []) {
+        if (item?.id && item?.result) {
+          videoCaptionTranslations.set(item.id, {
+            result: item.result,
+            engine: item.engine || ""
+          });
+        }
+      }
+    }).finally(() => {
+      for (const item of items) videoCaptionPending.delete(item.id);
+      scheduleVideoCaptionRead(0);
+    });
+  }
+
+  function scheduleVideoCaptionRead(delay = 20) {
+    if (checkAndTeardownIfOrphaned()) return;
+    if (!IS_TOP_FRAME || !settings.enabled || !settings.videoSubtitleEnabled) return;
+    const wait = Math.max(0, Number(delay || 0));
+    const dueAt = performance.now() + wait;
+    if (videoSubtitleTimer) {
+      // Keep the earlier deadline, but let a more urgent cue replace a later timer.
+      if (videoSubtitleTimerDueAt && videoSubtitleTimerDueAt <= dueAt + 2) return;
+      clearTimeout(videoSubtitleTimer);
+    }
+    videoSubtitleTimerDueAt = dueAt;
+    videoSubtitleTimer = window.setTimeout(() => {
+      videoSubtitleTimer = null;
+      videoSubtitleTimerDueAt = 0;
+      void processCurrentVideoCaption();
+    }, wait);
+  }
+
+  async function processCurrentVideoCaption() {
+    if (!settings.enabled || !settings.videoSubtitleEnabled) return;
+
+    if (
+      videoCaptionUsesPlayerTrack
+      || (!videoCaptionTimeline.length && !videoCaptionTranslatedTimeline.length)
+    ) {
+      const speechVideo = getPrimaryVideo();
+      if (speechVideo && !speechVideo.seeking) {
+        sampleVideoSubtitleSpeechActivity(speechVideo, performance.now());
+      }
+    }
+
+    if (videoCaptionUsesPlayerTrack) {
+      const video = getPrimaryVideo();
+      const currentTime = Number(video?.currentTime || 0);
+      if (video?.seeking) {
+        hideVideoSubtitleOverlay();
+        return;
+      }
+      const sourceIndex = videoCaptionTimeline.length
+        ? findTimelineCueIndex(currentTime)
+        : -1;
+      if (videoCaptionTimeline.length) {
+        scheduleNextTimelineCueRead(video, sourceIndex, videoCaptionTimeline);
+      }
+
+      if (videoCaptionTimeline.length && sourceIndex < 0) {
+        return;
+      }
+
+      const translatedText = readYouTubeCaptionText();
+      const sourceCue = sourceIndex >= 0 ? videoCaptionTimeline[sourceIndex] : null;
+      const sourceText = sourceCue?.text || "";
+      const targetLanguageCode = LANGUAGE_CATALOG?.codeFor(
+        settings.videoSubtitleTargetLanguage || "Vietnamese",
+        "vi"
+      ) || "vi";
+      const targetMatchesSource = Boolean(
+        sourceCue
+        && sameLanguageCodeForUi(videoCaptionActiveSourceLanguageCode, targetLanguageCode)
+      );
+
+      const translatedCue = videoCaptionTranslatedTimeline.length && sourceCue
+        ? videoCaptionTranslatedTimeline.find((c) => Math.abs(c.start - sourceCue.start) < 0.08)
+        : null;
+      const timelineTranslation = translatedCue?.text || "";
+
+      const cached = sourceCue
+        ? videoCaptionTranslations.get(getVideoCaptionCueCacheKey(sourceIndex))
+        : null;
+      const fullTranslation = targetMatchesSource
+        ? sourceText
+        : timelineTranslation || cached?.result || "";
+
+      if (sourceCue && fullTranslation) {
+        clearTimeout(videoSubtitleEmptyTimer);
+        const captionChanged = fullTranslation !== lastVideoCaptionText
+          || sourceIndex !== lastVideoCaptionTimelineIndex;
+        lastVideoCaptionText = fullTranslation;
+        lastVideoCaptionTimelineIndex = sourceIndex;
+        if (captionChanged || videoSubtitleEl?.style.display !== "flex") {
+          renderVideoSubtitleOverlay({
+            source: sourceText,
+            translation: fullTranslation,
+            engine: targetMatchesSource ? "youtube-source-track" : (timelineTranslation ? "youtube-timeline" : cached?.engine || "google-prefetch"),
+            karaokeStart: sourceCue.start,
+            karaokeEnd: sourceCue.end,
+            karaokeMode: "timeline"
+          });
+        }
+        prefetchVideoCaptionWindow(sourceIndex + 1);
+        return;
+      }
+
+      if (sourceCue) {
+        requestVideoCaptionCueTranslation(sourceIndex);
+        window.setTimeout(() => prefetchVideoCaptionWindow(sourceIndex + 1), 80);
+      }
+      if (!translatedText) return;
+
+      clearTimeout(videoSubtitleEmptyTimer);
+      if (translatedText === videoPlayerCaptionExpiredText) return;
+      if (videoPlayerCaptionExpiredText) videoPlayerCaptionExpiredText = "";
+
+      const captionChanged = translatedText !== lastVideoCaptionText;
+      if (captionChanged) lastVideoCaptionText = translatedText;
+
+      lastVideoCaptionTimelineIndex = sourceIndex;
+      if (!captionChanged && videoSubtitleEl?.style.display === "flex") return;
+      renderVideoSubtitleOverlay({
+        source: sourceText,
+        translation: translatedText,
+        engine: videoCaptionTranslationEngine || "youtube-player-track",
+        karaokeMode: "live"
+      });
+      return;
+    }
+
+    if (videoCaptionTimeline.length) {
+      const video = getPrimaryVideo();
+      const currentTime = Number(video?.currentTime || 0);
+      const index = findTimelineCueIndex(currentTime);
+      scheduleNextTimelineCueRead(video, index, videoCaptionTimeline);
+      if (index >= 0) {
+        const cue = videoCaptionTimeline[index];
+        if (videoCaptionTargetMatchesSource()) {
+          lastVideoCaptionText = cue.text;
+          lastVideoCaptionTimelineIndex = index;
+          clearTimeout(videoSubtitleEmptyTimer);
+          renderVideoSubtitleOverlay({
+            source: cue.text,
+            translation: cue.text,
+            engine: "source-track",
+            karaokeStart: cue.start,
+            karaokeEnd: cue.end,
+            karaokeMode: "timeline"
+          });
+          return;
+        }
+        if (videoCaptionTranslatedTimeline.length) {
+          const translatedIndex = findTimelineCueIndex(currentTime, videoCaptionTranslatedTimeline);
+          const translatedCue = translatedIndex >= 0 ? videoCaptionTranslatedTimeline[translatedIndex] : null;
+          lastVideoCaptionText = cue.text;
+          lastVideoCaptionTimelineIndex = index;
+
+          if (translatedCue?.text) {
+            clearTimeout(videoSubtitleEmptyTimer);
+            renderVideoSubtitleOverlay({
+              source: cue.text,
+              translation: translatedCue.text,
+              engine: videoCaptionTranslationEngine || "youtube",
+              karaokeStart: translatedCue.start,
+              karaokeEnd: translatedCue.end,
+              karaokeMode: "timeline"
+            });
+          }
+          return;
+        }
+        const key = getVideoCaptionCueCacheKey(index);
+        const cached = videoCaptionTranslations.get(key);
+        lastVideoCaptionText = cue.text;
+        lastVideoCaptionTimelineIndex = index;
+
+        if (cached?.result) {
+          clearTimeout(videoSubtitleEmptyTimer);
+          renderVideoSubtitleOverlay({
+            source: cue.text,
+            translation: cached.result,
+            engine: cached.engine,
+            karaokeStart: cue.start,
+            karaokeEnd: cue.end,
+            karaokeMode: "timeline"
+          });
+          prefetchVideoCaptionWindow(index + 1);
+          return;
+        }
+
+        if (settings.videoSubtitleBilingual) {
+          clearTimeout(videoSubtitleEmptyTimer);
+          renderVideoSubtitleOverlay({
+            source: cue.text,
+            translation: "",
+            engine: "translation-pending",
+            karaokeStart: cue.start,
+            karaokeEnd: cue.end,
+            karaokeMode: "timeline"
+          });
+        }
+        requestVideoCaptionCueTranslation(index);
+        window.setTimeout(() => prefetchVideoCaptionWindow(index + 1), 40);
+        return;
+      }
+    }
+
+    if (videoCaptionTranslatedTimeline.length) return;
+
+    const targetMatchesSource = videoCaptionTargetMatchesSource();
+    const liveCandidate = readYouTubeCaptionCandidate() || readHtmlVideoTrackText();
+    const text = readCurrentVideoCaptionText();
+
+    // When no translation is needed, render the raw live candidate immediately.
+    // The committed text intentionally lags behind to avoid translating every growing word,
+    // but it must not delay same-language subtitle display.
+    if (targetMatchesSource && liveCandidate) {
+      lastVideoCaptionText = liveCandidate;
+      clearTimeout(videoSubtitleEmptyTimer);
+      renderVideoSubtitleOverlay({
+        source: liveCandidate,
+        translation: liveCandidate,
+        engine: "source-track",
+        karaokeMode: "live"
+      });
+      return;
+    }
+
+    if (!text) {
+      if (settings.videoSubtitleBilingual && liveCandidate && !targetMatchesSource) {
+        clearTimeout(videoSubtitleEmptyTimer);
+        renderVideoSubtitleOverlay({
+          source: liveCandidate,
+          translation: "",
+          engine: "translation-pending",
+          karaokeMode: "live"
+        });
+      }
+      return;
+    }
+
+    clearTimeout(videoSubtitleEmptyTimer);
+    if (targetMatchesSource) {
+      const displayText = liveCandidate || text;
+      lastVideoCaptionText = displayText;
+      renderVideoSubtitleOverlay({
+        source: displayText,
+        translation: displayText,
+        engine: "source-track",
+        karaokeMode: "live"
+      });
+      return;
+    }
+    const key = getVideoCaptionCacheKey(text);
+    const cached = videoCaptionTranslations.get(key);
+    if (cached?.result) {
+      lastVideoCaptionText = text;
+      renderVideoSubtitleOverlay({
+      source: text,
+      translation: cached.result,
+      engine: cached.engine,
+      karaokeMode: "live"
+    });
+      return;
+    }
+    if (settings.videoSubtitleBilingual) {
+      clearTimeout(videoSubtitleEmptyTimer);
+      renderVideoSubtitleOverlay({
+        source: text,
+        translation: "",
+        engine: "translation-pending",
+        karaokeMode: "live"
+      });
+    }
+    if (text === lastVideoCaptionText && videoCaptionPending.has(key)) return;
+    lastVideoCaptionText = text;
+    videoCaptionPending.add(key);
+
+    const requestId = ++videoSubtitleRequestSeq;
+    const response = await sendMessage({
+      type: "IB_TRANSLATE_VIDEO_CAPTION",
+      text,
+      sourceLanguage: videoCaptionActiveSourceLanguageCode || settings.videoSubtitleSourceLanguage || "auto",
+      targetLanguage: settings.videoSubtitleTargetLanguage || "Vietnamese",
+      origin: getPageOrigin()
+    });
+    videoCaptionPending.delete(key);
+
+    if (requestId !== videoSubtitleRequestSeq || text !== lastVideoCaptionText) return;
+    if (!response?.ok || !response?.data?.result) return;
+
+    videoCaptionTranslations.set(key, {
+      result: response.data.result,
+      engine: response.data.engine || ""
+    });
+    renderVideoSubtitleOverlay({
+      source: text,
+      translation: response.data.result,
+      engine: response.data.engine,
+      karaokeMode: "live"
+    });
+  }
+
+  function resetVideoSubtitleLiveKaraoke() {
+    videoSubtitleLiveKaraokeCandidate = "";
+    videoSubtitleLiveKaraokeDisplayText = "";
+    videoSubtitleLiveKaraokeCandidateWordCount = 0;
+    videoSubtitleLiveKaraokeLastArrivalAt = 0;
+    videoSubtitleLiveKaraokeMsPerWord = 245;
+    videoSubtitleLiveKaraokeNextStepAt = 0;
+    videoSubtitleLiveKaraokeTargetIndex = -1;
+    videoSubtitleKaraokeActiveIndex = -1;
+  }
+
+  function resetYouTubeCaptionReader() {
+    videoPlayerCaptionCandidateText = "";
+    videoPlayerCaptionCandidateChangedAt = 0;
+    videoPlayerCaptionCandidateStartedAt = 0;
+    videoPlayerCaptionCandidateSpeechClockStartedAt = 0;
+    videoPlayerCaptionCommittedText = "";
+    videoPlayerCaptionLastCommittedAt = 0;
+    resetVideoSubtitleLiveKaraoke();
+  }
+
+  function readCurrentVideoCaptionText() {
+    return readYouTubeCaptionText() || readHtmlVideoTrackText();
+  }
+
+  function readYouTubeCaptionText() {
+    const candidate = readYouTubeCaptionCandidate();
+    if (!candidate) return videoPlayerCaptionCommittedText;
+
+    const now = performance.now();
+    if (candidate !== videoPlayerCaptionCandidateText) {
+      const previousCandidate = videoPlayerCaptionCandidateText;
+      const sameGrowingChunk = Boolean(
+        previousCandidate
+        && (candidate.startsWith(previousCandidate) || previousCandidate.startsWith(candidate))
+      );
+
+      if (!sameGrowingChunk || !videoPlayerCaptionCandidateStartedAt) {
+        videoPlayerCaptionCandidateStartedAt = now;
+        videoPlayerCaptionCandidateSpeechClockStartedAt = videoSubtitleSpeechClockMs;
+      }
+      videoPlayerCaptionCandidateText = candidate;
+      videoPlayerCaptionCandidateChangedAt = now;
+    }
+
+    const completeSentence = hasCaptionTerminalPunctuation(candidate);
+    const wordCount = candidate.split(/\s+/).filter(Boolean).length;
+    const committedWordCount = videoPlayerCaptionCommittedText.split(/\s+/).filter(Boolean).length;
+    const hasEnoughContent = candidate.length >= 8 || wordCount >= 2;
+    const isNewChunk = !videoPlayerCaptionCommittedText
+      || (!candidate.startsWith(videoPlayerCaptionCommittedText)
+        && !videoPlayerCaptionCommittedText.startsWith(candidate));
+    const initialCommitDue = isNewChunk
+      && hasEnoughContent
+      && now - videoPlayerCaptionCandidateStartedAt >= VIDEO_PLAYER_CAPTION_INITIAL_COMMIT_MS;
+    const refreshDue = !isNewChunk
+      && hasEnoughContent
+      && now - videoPlayerCaptionLastCommittedAt >= VIDEO_PLAYER_CAPTION_REFRESH_MS
+      && (candidate.length - videoPlayerCaptionCommittedText.length >= 10
+        || wordCount - committedWordCount >= 2);
+
+    if (candidate !== videoPlayerCaptionCommittedText && (completeSentence || initialCommitDue || refreshDue)) {
+      videoPlayerCaptionCommittedText = candidate;
+      videoPlayerCaptionLastCommittedAt = now;
+    } else if (candidate !== videoPlayerCaptionCommittedText) {
+      scheduleVideoCaptionRead(60);
+    }
+
+    return videoPlayerCaptionCommittedText;
+  }
+
+  function readYouTubeCaptionCandidate() {
+    const windows = [...document.querySelectorAll(".ytp-caption-window-container .caption-window")]
+      .filter((windowEl) => !windowEl.closest(".ib-video-subtitle-overlay"));
+    const scope = windows.at(-1) || document;
+    const nodes = [...scope.querySelectorAll(".caption-visual-line .ytp-caption-segment")];
+    const fallbackNodes = nodes.length
+      ? nodes
+      : [...scope.querySelectorAll(".ytp-caption-segment, .caption-visual-line")];
+    const parts = [];
+
+    for (const node of fallbackNodes) {
+      const value = cleanYouTubeCaptionSegment(node.textContent);
+      if (value && value !== parts.at(-1)) parts.push(value);
+    }
+
+    return extractLatestYouTubeCaptionChunk(parts);
+  }
+
+  function extractLatestYouTubeCaptionChunk(parts) {
+    if (!parts.length) return "";
+
+    let startIndex = 0;
+    let markerOffset = -1;
+    for (let index = 0; index < parts.length; index += 1) {
+      const offset = parts[index].lastIndexOf(">>");
+      if (offset >= 0) {
+        startIndex = index;
+        markerOffset = offset + 2;
+      }
+    }
+
+    const activeParts = parts.slice(startIndex);
+    if (markerOffset >= 0 && activeParts.length) {
+      activeParts[0] = activeParts[0].slice(markerOffset).trim();
+    }
+
+    const activeText = normalizeVideoCaptionText(activeParts.filter(Boolean).join(" "));
+    const fullText = normalizeVideoCaptionText(parts.join(" ").replace(/>>/g, " "));
+    const sentencePattern = /[^.!?…。！？]+[.!?…。！？]+(?:["'”’）)\]}]+)?/g;
+    const extractCurrentSentence = (text) => {
+      const value = normalizeVideoCaptionText(text);
+      if (!value) return "";
+
+      const trailing = value.match(/(?:^|[.!?…。！？]+(?:["'”’）)\]}]+)?\s+)([^.!?…。！？]+)$/)?.[1];
+      if (trailing) return normalizeVideoCaptionText(trailing);
+
+      const completed = value.match(sentencePattern)
+        ?.map((sentence) => normalizeVideoCaptionText(sentence))
+        .filter(Boolean) || [];
+      return completed.at(-1) || value;
+    };
+
+    const activeCurrent = extractCurrentSentence(activeText);
+    if (activeCurrent) return activeCurrent;
+
+    const fullCurrent = extractCurrentSentence(fullText);
+    if (fullCurrent) return fullCurrent;
+
+    if (activeParts.length > 1) return normalizeVideoCaptionText(activeParts.at(-1));
+    return activeText;
+  }
+
+  function hasCaptionTerminalPunctuation(text) {
+    return /[.!?…。！？](?:["'”’）)\]}]+)?$/.test(String(text || "").trim());
+  }
+
+  function cleanYouTubeCaptionSegment(value) {
+    let text = normalizeVideoCaptionText(value);
+    if (!text) return "";
+
+    text = text.replace(/^.*?click\s+(?:here\s+)?for\s+settings\s*/i, "").trim();
+    const labels = new Set([
+      settings.videoSubtitleTargetLanguage,
+      LANGUAGE_CATALOG?.nameFor(videoCaptionActiveSourceLanguageCode, ""),
+      ...videoCaptionAvailableTracks.map((track) => track?.label)
+    ].filter(Boolean).map((label) => normalizeVideoCaptionText(label)));
+
+    const orderedLabels = [...labels].sort((left, right) => right.length - left.length);
+
+    for (const label of orderedLabels) {
+      if (!label) continue;
+      if (text.toLowerCase() === label.toLowerCase()) return "";
+      if (text.toLowerCase().startsWith(`${label.toLowerCase()} `)) {
+        text = text.slice(label.length).trim();
+        break;
+      }
+    }
+
+    return normalizeVideoCaptionText(text);
+  }
+
+  function readHtmlVideoTrackText() {
+    const parts = [];
+    for (const video of document.querySelectorAll("video")) {
+      for (const track of video.textTracks || []) {
+        const cues = [...(track.activeCues || [])];
+        for (const cue of cues) {
+          const value = normalizeVideoCaptionText(cue?.text);
+          if (value && value !== parts.at(-1)) parts.push(value);
+        }
+      }
+    }
+    return normalizeVideoCaptionText(parts.join(" "));
+  }
+
+  function normalizeVideoCaptionText(value) {
+    return String(value || "")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 800);
+  }
+
+  function getVideoSubtitleHost() {
+    const fullscreen = document.fullscreenElement;
+    if (fullscreen) {
+      if (fullscreen instanceof HTMLVideoElement) {
+        return fullscreen.parentElement || document.body || document.documentElement;
+      }
+      return fullscreen;
+    }
+    return document.querySelector(".html5-video-player")
+      || document.querySelector("video")?.parentElement
+      || document.body
+      || document.documentElement;
+  }
+
+  function ensureVideoSubtitleOverlay(forceReattach = false) {
+    const host = getVideoSubtitleHost();
+    if (!host) return null;
+
+    if (!videoSubtitleEl) {
+      videoSubtitleEl = document.createElement("div");
+      videoSubtitleEl.className = "ib-video-subtitle-overlay";
+      videoSubtitleEl.setAttribute("aria-live", "polite");
+      videoSubtitleEl.innerHTML = `
+        <div class="ib-video-subtitle-item" data-subtitle-kind="source">
+          <button class="ib-video-subtitle-drag-handle" type="button" aria-label="Kéo phụ đề gốc" title="Kéo để đổi vị trí · Nhấp đúp để đặt lại"></button>
+          <div class="ib-video-subtitle-source"></div>
+        </div>
+        <div class="ib-video-subtitle-item" data-subtitle-kind="translation">
+          <button class="ib-video-subtitle-drag-handle" type="button" aria-label="Kéo bản dịch" title="Kéo để đổi vị trí · Nhấp đúp để đặt lại"></button>
+          <div class="ib-video-subtitle-translation"></div>
+        </div>
+        <div class="ib-video-subtitle-word-tooltip" role="tooltip" hidden></div>
+      `;
+      bindVideoSubtitleDrag(videoSubtitleEl);
+      void loadVideoSubtitleDragPositions();
+    }
+
+    if (forceReattach || videoSubtitleEl.parentElement !== host) {
+      videoSubtitleEl.remove();
+      if (host !== document.body && host !== document.documentElement) host.classList.add("ib-video-subtitle-host");
+      host.appendChild(videoSubtitleEl);
+      bindVideoSubtitleWordHover(videoSubtitleEl);
+      bindVideoSubtitleDrag(videoSubtitleEl);
+    }
+
+    videoSubtitleEl.dataset.position = settings.videoSubtitlePosition === "top" ? "top" : "bottom";
+    const legacyFontSize = Math.max(16, Math.min(36, Number(settings.videoSubtitleFontSize || 22)));
+    const sourceFontSize = Math.max(14, Math.min(42, Number(settings.videoSubtitleSourceFontSize || legacyFontSize + 2)));
+    const translationFontSize = Math.max(14, Math.min(42, Number(settings.videoSubtitleTranslationFontSize || legacyFontSize - 2)));
+    const sourceColor = normalizeVideoSubtitleColor(settings.videoSubtitleSourceColor, "#ffffff");
+    const translationColor = normalizeVideoSubtitleColor(settings.videoSubtitleTranslationColor, "#8fd3ff");
+    const sourceOpacity = clampNumber(settings.videoSubtitleSourceBackgroundOpacity, 0, 100, 78) / 100;
+    const translationOpacity = clampNumber(settings.videoSubtitleTranslationBackgroundOpacity, 0, 100, 82) / 100;
+    const sourceBackground = videoSubtitleColorWithAlpha(settings.videoSubtitleSourceBackground, sourceOpacity, "#111827");
+    const translationBackground = videoSubtitleColorWithAlpha(settings.videoSubtitleTranslationBackground, translationOpacity, "#0b2538");
+    videoSubtitleEl.dataset.sourceTransparent = String(sourceOpacity <= 0.02);
+    videoSubtitleEl.dataset.translationTransparent = String(translationOpacity <= 0.02);
+    const sourceWeight = clampNumber(settings.videoSubtitleSourceFontWeight, 400, 800, 700);
+    const translationWeight = clampNumber(settings.videoSubtitleTranslationFontWeight, 400, 800, 600);
+    const sourceRadius = clampNumber(settings.videoSubtitleSourceRadius, 0, 24, 10);
+    const translationRadius = clampNumber(settings.videoSubtitleTranslationRadius, 0, 24, 10);
+    const sourceOutline = clampNumber(settings.videoSubtitleSourceOutline, 0, 3, 1);
+    const translationOutline = clampNumber(settings.videoSubtitleTranslationOutline, 0, 3, 1);
+
+    videoSubtitleEl.style.setProperty("--ib-video-subtitle-size", `${translationFontSize}px`);
+    videoSubtitleEl.style.setProperty("--ib-video-subtitle-source-size", `${sourceFontSize}px`);
+    videoSubtitleEl.style.setProperty("--ib-video-subtitle-translation-size", `${translationFontSize}px`);
+    videoSubtitleEl.style.setProperty("--ib-video-subtitle-source-color", sourceColor);
+    videoSubtitleEl.style.setProperty("--ib-video-subtitle-translation-color", translationColor);
+    videoSubtitleEl.style.setProperty("--ib-video-subtitle-source-bg", sourceBackground);
+    videoSubtitleEl.style.setProperty("--ib-video-subtitle-translation-bg", translationBackground);
+    videoSubtitleEl.style.setProperty("--ib-video-subtitle-source-family", videoSubtitleFontFamily(settings.videoSubtitleSourceFontFamily));
+    videoSubtitleEl.style.setProperty("--ib-video-subtitle-translation-family", videoSubtitleFontFamily(settings.videoSubtitleTranslationFontFamily));
+    videoSubtitleEl.style.setProperty("--ib-video-subtitle-source-weight", String(sourceWeight));
+    videoSubtitleEl.style.setProperty("--ib-video-subtitle-translation-weight", String(translationWeight));
+    videoSubtitleEl.style.setProperty("--ib-video-subtitle-source-radius", `${sourceRadius}px`);
+    videoSubtitleEl.style.setProperty("--ib-video-subtitle-translation-radius", `${translationRadius}px`);
+    videoSubtitleEl.style.setProperty("--ib-video-subtitle-source-outline", `${sourceOutline}px`);
+    videoSubtitleEl.style.setProperty("--ib-video-subtitle-translation-outline", `${translationOutline}px`);
+    return videoSubtitleEl;
+  }
+
+  function clampNumber(value, min, max, fallback) {
+    const number = Number(value);
+    return Number.isFinite(number) ? Math.max(min, Math.min(max, number)) : fallback;
+  }
+
+  function normalizeVideoSubtitleColor(value, fallback) {
+    const color = String(value || "").trim();
+    return /^#[0-9a-f]{6}$/i.test(color) ? color : fallback;
+  }
+
+  function videoSubtitleColorWithAlpha(value, alpha, fallback) {
+    const color = normalizeVideoSubtitleColor(value, fallback).slice(1);
+    const red = Number.parseInt(color.slice(0, 2), 16);
+    const green = Number.parseInt(color.slice(2, 4), 16);
+    const blue = Number.parseInt(color.slice(4, 6), 16);
+    return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+  }
+
+  function videoSubtitleFontFamily(value) {
+    const families = {
+      system: 'Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif',
+      sans: 'Arial, Helvetica, ui-sans-serif, sans-serif',
+      serif: 'Georgia, "Times New Roman", ui-serif, serif',
+      mono: 'ui-monospace, "SFMono-Regular", Consolas, monospace'
+    };
+    return families[String(value || "system")] || families.system;
+  }
+
+  function getDefaultVideoSubtitleDragPositions() {
+    const top = settings.videoSubtitlePosition === "top";
+    return top
+      ? { source: { x: 50, y: 14 }, translation: { x: 50, y: 24 } }
+      : { source: { x: 50, y: 76 }, translation: { x: 50, y: 86 } };
+  }
+
+  function sanitizeVideoSubtitlePosition(value, fallback) {
+    return {
+      x: clampNumber(value?.x, 0, 100, fallback.x),
+      y: clampNumber(value?.y, 0, 100, fallback.y)
+    };
+  }
+
+  function getVideoSubtitleDragPositions() {
+    const defaults = getDefaultVideoSubtitleDragPositions();
+    return {
+      source: sanitizeVideoSubtitlePosition(videoSubtitleDragPositions?.source, defaults.source),
+      translation: sanitizeVideoSubtitlePosition(videoSubtitleDragPositions?.translation, defaults.translation)
+    };
+  }
+
+  async function loadVideoSubtitleDragPositions() {
+    if (videoSubtitlePositionLoadPromise) return videoSubtitlePositionLoadPromise;
+    videoSubtitlePositionLoadPromise = chrome.storage.local.get(VIDEO_SUBTITLE_POSITION_STORAGE_KEY)
+      .then((stored) => {
+        const byOrigin = stored?.[VIDEO_SUBTITLE_POSITION_STORAGE_KEY] || {};
+        videoSubtitleDragPositions = byOrigin[getPageOrigin()] || null;
+        applyVideoSubtitleItemPositions();
+      })
+      .catch(() => {
+        videoSubtitleDragPositions = null;
+      });
+    return videoSubtitlePositionLoadPromise;
+  }
+
+  function saveVideoSubtitleDragPositions() {
+    clearTimeout(videoSubtitlePositionSaveTimer);
+    videoSubtitlePositionSaveTimer = window.setTimeout(async () => {
+      try {
+        const stored = await chrome.storage.local.get(VIDEO_SUBTITLE_POSITION_STORAGE_KEY);
+        const byOrigin = { ...(stored?.[VIDEO_SUBTITLE_POSITION_STORAGE_KEY] || {}) };
+        byOrigin[getPageOrigin()] = getVideoSubtitleDragPositions();
+        await chrome.storage.local.set({ [VIDEO_SUBTITLE_POSITION_STORAGE_KEY]: byOrigin });
+      } catch {}
+    }, 120);
+  }
+
+  function applyVideoSubtitleItemPositions(overlay = videoSubtitleEl) {
+    if (!overlay?.isConnected) return;
+    const overlayRect = overlay.getBoundingClientRect();
+    if (!overlayRect.width || !overlayRect.height) return;
+    const positions = getVideoSubtitleDragPositions();
+
+    for (const kind of ["source", "translation"]) {
+      const item = overlay.querySelector(`.ib-video-subtitle-item[data-subtitle-kind="${kind}"]`);
+      if (!item) continue;
+      item.style.left = `${positions[kind].x}%`;
+      item.style.top = `${positions[kind].y}%`;
+    }
+  }
+
+  function bindVideoSubtitleDrag(overlay) {
+    if (!overlay || overlay.dataset.dragBound === "true") return;
+    overlay.dataset.dragBound = "true";
+
+    for (const handle of overlay.querySelectorAll(".ib-video-subtitle-drag-handle")) {
+      handle.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0) return;
+        const item = handle.closest(".ib-video-subtitle-item");
+        if (!item) return;
+        const overlayRect = overlay.getBoundingClientRect();
+        const itemRect = item.getBoundingClientRect();
+        if (!overlayRect.width || !overlayRect.height) return;
+
+        videoSubtitleDragState = {
+          pointerId: event.pointerId,
+          item,
+          kind: item.dataset.subtitleKind,
+          offsetX: event.clientX - (itemRect.left + itemRect.width / 2),
+          offsetY: event.clientY - (itemRect.top + itemRect.height / 2)
+        };
+        item.classList.add("is-dragging");
+        try { handle.setPointerCapture?.(event.pointerId); } catch {}
+        event.preventDefault();
+        event.stopPropagation();
+      });
+
+      handle.addEventListener("pointermove", (event) => {
+        const state = videoSubtitleDragState;
+        if (!state || state.pointerId !== event.pointerId) return;
+        const overlayRect = overlay.getBoundingClientRect();
+        const itemRect = state.item.getBoundingClientRect();
+        const halfWidth = itemRect.width / 2;
+        const halfHeight = itemRect.height / 2;
+        const centerX = Math.max(halfWidth, Math.min(overlayRect.width - halfWidth, event.clientX - overlayRect.left - state.offsetX));
+        const centerY = Math.max(halfHeight, Math.min(overlayRect.height - halfHeight, event.clientY - overlayRect.top - state.offsetY));
+
+        state.item.style.left = `${centerX}px`;
+        state.item.style.top = `${centerY}px`;
+        const positions = getVideoSubtitleDragPositions();
+        positions[state.kind] = {
+          x: centerX / overlayRect.width * 100,
+          y: centerY / overlayRect.height * 100
+        };
+        videoSubtitleDragPositions = positions;
+        event.preventDefault();
+        event.stopPropagation();
+      });
+
+      const finishDrag = (event) => {
+        const state = videoSubtitleDragState;
+        if (!state || state.pointerId !== event.pointerId) return;
+        state.item.classList.remove("is-dragging");
+        videoSubtitleDragState = null;
+        saveVideoSubtitleDragPositions();
+        try { handle.releasePointerCapture?.(event.pointerId); } catch {}
+        event.preventDefault();
+        event.stopPropagation();
+      };
+      handle.addEventListener("pointerup", finishDrag);
+      handle.addEventListener("pointercancel", finishDrag);
+
+      handle.addEventListener("dblclick", (event) => {
+        const kind = handle.closest(".ib-video-subtitle-item")?.dataset.subtitleKind;
+        if (!kind) return;
+        const positions = getVideoSubtitleDragPositions();
+        positions[kind] = getDefaultVideoSubtitleDragPositions()[kind];
+        videoSubtitleDragPositions = positions;
+        applyVideoSubtitleItemPositions(overlay);
+        saveVideoSubtitleDragPositions();
+        event.preventDefault();
+        event.stopPropagation();
+      });
+    }
+  }
+
+  function renderVideoSubtitleOverlay({
+    source = "",
+    translation = "",
+    engine = "",
+    karaokeStart = null,
+    karaokeEnd = null,
+    karaokeMode = ""
+  } = {}) {
+    const value = normalizeVideoCaptionText(translation);
+    const normalizedSource = normalizeVideoCaptionText(source);
+    const translationVisible = Boolean(value);
+    const sourceVisible = Boolean(
+      settings.videoSubtitleBilingual
+      && normalizedSource
+      && (!translationVisible || normalizedSource.toLocaleLowerCase() !== value.toLocaleLowerCase())
+    );
+    if (!translationVisible && !sourceVisible) {
+      hideVideoSubtitleOverlay();
+      return;
+    }
+
+    const overlay = ensureVideoSubtitleOverlay();
+    if (!overlay) return;
+
+    const sourceEl = overlay.querySelector(".ib-video-subtitle-source");
+    const translationEl = overlay.querySelector(".ib-video-subtitle-translation");
+    const sourceItem = sourceEl.closest(".ib-video-subtitle-item");
+    const translationItem = translationEl.closest(".ib-video-subtitle-item");
+
+    renderVideoSubtitleWordText(sourceEl, sourceVisible ? normalizedSource : "", "source");
+    sourceEl.hidden = !sourceVisible;
+    if (sourceItem) sourceItem.hidden = !sourceVisible;
+    translationEl.hidden = !translationVisible;
+    if (translationItem) translationItem.hidden = !translationVisible;
+
+    if (translationVisible) {
+      const cueStart = Number(karaokeStart);
+      const cueEnd = Number(karaokeEnd);
+      const hasCueTiming = Number.isFinite(cueStart)
+        && Number.isFinite(cueEnd)
+        && cueEnd > cueStart;
+      const newCueId = karaokeMode === "timeline"
+        ? `timeline_${cueStart}_${cueEnd}`
+        : `live_${videoPlayerCaptionCandidateStartedAt || 0}`;
+      const sameCue = newCueId === currentVideoSubtitleCueId;
+
+      if (newCueId !== currentVideoSubtitleCueId) {
+        console.log("[InputBridge] Cue changed:", { previous: currentVideoSubtitleCueId, next: newCueId });
+        currentVideoSubtitleCueId = newCueId;
+      }
+      if (translationEl.dataset.karaokeKey !== newCueId) {
+        translationEl.dataset.karaokeKey = newCueId;
+        if (!sameCue) resetVideoSubtitleLiveKaraoke();
+      }
+
+      translationEl.dataset.karaokeMode = karaokeMode || "";
+      if (hasCueTiming) {
+        translationEl.dataset.karaokeStart = String(cueStart);
+        translationEl.dataset.karaokeEnd = String(cueEnd);
+      } else {
+        delete translationEl.dataset.karaokeStart;
+        delete translationEl.dataset.karaokeEnd;
+      }
+      renderVideoSubtitleKaraokeText(translationEl, value, sameCue);
+    } else {
+      if (translationEl.childNodes.length) translationEl.replaceChildren();
+      delete translationEl.dataset.karaokeKey;
+      delete translationEl.dataset.karaokeMode;
+      delete translationEl.dataset.karaokeStart;
+      delete translationEl.dataset.karaokeEnd;
+      stopVideoSubtitleKaraokeLoop();
+    }
+
+    overlay.classList.toggle("is-bilingual", sourceVisible && translationVisible);
+    overlay.dataset.engine = engine || "";
+    overlay.style.display = "flex";
+    requestAnimationFrame(() => applyVideoSubtitleItemPositions(overlay));
+    setNativeVideoCaptionsHidden(true);
+
+    if (translationVisible) {
+      updateVideoSubtitleKaraoke();
+      startVideoSubtitleKaraokeLoop();
+    }
+  }
+
+  function renderVideoSubtitleWordText(container, value, direction) {
+    if (!container) return;
+    const normalized = normalizeVideoCaptionText(value);
+    const renderKey = `${direction}\u0000${normalized}`;
+    if (container.dataset.hoverRenderKey === renderKey) return;
+
+    if (videoSubtitleWordHoverEl && container.contains(videoSubtitleWordHoverEl)) {
+      hideVideoSubtitleWordTooltip(videoSubtitleEl, { force: true });
+    }
+
+    container.dataset.hoverRenderKey = renderKey;
+    container.replaceChildren();
+    for (const segment of segmentVideoSubtitleText(normalized)) {
+      if (!segment.isWord) {
+        container.appendChild(document.createTextNode(segment.text));
+        continue;
+      }
+      const word = document.createElement('span');
+      word.className = 'ib-video-subtitle-word ib-video-subtitle-word-hover';
+      word.dataset.hoverDirection = direction;
+      word.dataset.hoverWord = segment.text;
+      word.textContent = segment.text;
+      container.appendChild(word);
+    }
+  }
+
+  const VIDEO_SUBTITLE_PHRASE_LINKERS = new Set([
+    'a', 'an', 'the', 'to', 'of', 'for', 'from', 'with', 'without', 'at', 'by', 'in', 'on',
+    'into', 'onto', 'over', 'under', 'after', 'before', 'through', 'around', 'about', 'as', 'than'
+  ]);
+  const VIDEO_SUBTITLE_PHRASE_PARTICLES = new Set([
+    'up', 'down', 'out', 'off', 'on', 'in', 'into', 'over', 'away', 'back', 'through', 'around',
+    'along', 'apart', 'after', 'across'
+  ]);
+
+  function clearVideoSubtitleHoverHighlights() {
+    for (const element of videoSubtitleWordHoverEls) {
+      element?.classList.remove('is-hovered', 'is-phrase-hovered');
+    }
+    videoSubtitleWordHoverEls = [];
+  }
+
+  function hideVideoSubtitleWordTooltip(overlay, { force = false } = {}) {
+    if (videoSubtitleSelectionActive && !force) return;
+    clearTimeout(videoSubtitleWordHoverTimer);
+    videoSubtitleWordHoverSeq += 1;
+    clearVideoSubtitleHoverHighlights();
+    videoSubtitleWordHoverEl = null;
+    videoSubtitleWordHoverUsesPhrase = false;
+    if (force) videoSubtitleSelectionActive = false;
+    const tooltip = overlay?.querySelector('.ib-video-subtitle-word-tooltip');
+    if (tooltip) tooltip.hidden = true;
+  }
+
+  function hasVideoSubtitlePhraseBoundary(leftWord, rightWord) {
+    let node = leftWord?.nextSibling || null;
+    while (node && node !== rightWord) {
+      if (node.nodeType === Node.TEXT_NODE && /[.!?;:\n]/u.test(node.textContent || '')) return true;
+      node = node.nextSibling;
+    }
+    return false;
+  }
+
+  function getVideoSubtitleTextBetween(firstWord, lastWord) {
+    if (!firstWord || !lastWord) return '';
+    const range = document.createRange();
+    range.setStartBefore(firstWord);
+    range.setEndAfter(lastWord);
+    return normalizeVideoCaptionText(range.toString());
+  }
+
+  function getSmartVideoSubtitlePhrase(wordEl) {
+    const container = wordEl?.closest?.('.ib-video-subtitle-source, .ib-video-subtitle-translation');
+    const words = container ? [...container.querySelectorAll('.ib-video-subtitle-word-hover')] : [];
+    const index = words.indexOf(wordEl);
+    if (index < 0) return { text: '', elements: [] };
+
+    const tokens = words.map((item) => normalizeVideoSubtitleWord(item.dataset.hoverWord || item.textContent));
+    const canIncludeLeft = (position) => position > 0 && !hasVideoSubtitlePhraseBoundary(words[position - 1], words[position]);
+    const canIncludeRight = (position) => position < words.length - 1 && !hasVideoSubtitlePhraseBoundary(words[position], words[position + 1]);
+    let start = index;
+    let end = index;
+
+    if (canIncludeLeft(start) && VIDEO_SUBTITLE_PHRASE_LINKERS.has(tokens[start - 1])) start -= 1;
+    if (canIncludeRight(end) && VIDEO_SUBTITLE_PHRASE_LINKERS.has(tokens[end + 1])) end += 1;
+
+    if (VIDEO_SUBTITLE_PHRASE_LINKERS.has(tokens[index]) || VIDEO_SUBTITLE_PHRASE_PARTICLES.has(tokens[index])) {
+      if (canIncludeRight(end) && end - start + 1 < 5) end += 1;
+      else if (canIncludeLeft(start) && end - start + 1 < 5) start -= 1;
+    }
+
+    if (canIncludeRight(end) && VIDEO_SUBTITLE_PHRASE_PARTICLES.has(tokens[end + 1]) && end - start + 1 < 5) {
+      end += 1;
+    }
+    if (
+      start === index
+      && VIDEO_SUBTITLE_PHRASE_PARTICLES.has(tokens[index])
+      && canIncludeLeft(start)
+      && end - start + 1 < 5
+    ) {
+      start -= 1;
+    }
+
+    const rightToken = tokens[end + 1];
+    if (canIncludeRight(end) && ['a', 'an', 'the'].includes(rightToken) && end - start + 1 < 4) {
+      end += 1;
+      if (canIncludeRight(end) && end - start + 1 < 5) end += 1;
+    }
+
+    const leftToken = tokens[start - 1];
+    if (canIncludeLeft(start) && ['a', 'an', 'the'].includes(leftToken) && end - start + 1 < 4) {
+      start -= 1;
+      if (canIncludeLeft(start) && end - start + 1 < 5) start -= 1;
+    }
+
+    if (start === end) {
+      if (canIncludeRight(end)) end += 1;
+      else if (canIncludeLeft(start)) start -= 1;
+    }
+
+    const elements = words.slice(start, end + 1);
+    return {
+      text: getVideoSubtitleTextBetween(elements[0], elements.at(-1)),
+      elements
+    };
+  }
+
+  function getVideoSubtitleDirectionLanguages(direction) {
+    const targetLanguageCode = LANGUAGE_CATALOG?.codeFor(
+      settings.videoSubtitleTargetLanguage || 'Vietnamese',
+      'vi'
+    ) || 'vi';
+    const configuredSourceCode = String(settings.videoSubtitleSourceLanguage || 'auto');
+    const activeSourceCode = configuredSourceCode.toLowerCase() === 'auto'
+      ? (videoCaptionActiveSourceLanguageCode || 'auto')
+      : configuredSourceCode;
+    const isSourceText = direction === 'source';
+    return {
+      sourceCode: isSourceText ? activeSourceCode : targetLanguageCode,
+      targetCode: isSourceText ? targetLanguageCode : activeSourceCode
+    };
+  }
+
+  function positionVideoSubtitleWordTooltip(overlay, tooltip, rect) {
+    const overlayRect = overlay.getBoundingClientRect();
+    tooltip.style.left = `${Math.max(18, Math.min(overlayRect.width - 18, rect.left - overlayRect.left + rect.width / 2))}px`;
+    tooltip.style.top = `${rect.top - overlayRect.top - 8}px`;
+    tooltip.hidden = false;
+  }
+
+  function renderVideoSubtitleWordTooltip(tooltip, sourceText, resultText, mode = 'word') {
+    tooltip.dataset.mode = mode;
+    tooltip.replaceChildren();
+    const source = document.createElement('div');
+    source.className = 'ib-video-subtitle-tooltip-source';
+    source.textContent = sourceText;
+    const result = document.createElement('div');
+    result.className = 'ib-video-subtitle-tooltip-result';
+    result.textContent = resultText;
+    tooltip.append(source, result);
+  }
+
+  async function requestVideoSubtitleTermTranslation({ text, context, direction, mode }) {
+    const { sourceCode, targetCode } = getVideoSubtitleDirectionLanguages(direction);
+    if (!targetCode || targetCode === 'auto') {
+      return { result: '', error: 'Chưa xác định ngôn ngữ gốc' };
+    }
+
+    const normalizedText = normalizeVideoCaptionText(text).slice(0, 240);
+    const normalizedContext = normalizeVideoCaptionText(context).slice(0, 800);
+    const key = `${sourceCode}|${targetCode}|${mode}|${normalizedContext.toLocaleLowerCase()}|${normalizedText.toLocaleLowerCase()}`;
+    const cached = videoSubtitleWordCache.get(key);
+    if (cached) return { result: cached, error: '' };
+
+    const response = await sendMessage({
+      type: 'IB_TRANSLATE_SUBTITLE_WORD',
+      text: normalizedText,
+      context: normalizedContext,
+      mode,
+      sourceLanguage: sourceCode,
+      targetLanguage: targetCode,
+      origin: getPageOrigin()
+    });
+    const result = normalizeVideoCaptionText(response?.data?.result || '');
+    if (response?.ok && result) {
+      videoSubtitleWordCache.set(key, result);
+      if (videoSubtitleWordCache.size > 300) {
+        videoSubtitleWordCache.delete(videoSubtitleWordCache.keys().next().value);
+      }
+      return { result, error: '' };
+    }
+    return { result: '', error: 'Không dịch được' };
+  }
+
+  function getVideoSubtitleSelectionPayload(overlay) {
+    const selection = window.getSelection?.();
+    if (!selection || selection.isCollapsed || !selection.rangeCount) return null;
+    const sourceEl = overlay.querySelector('.ib-video-subtitle-source');
+    const translationEl = overlay.querySelector('.ib-video-subtitle-translation');
+    const anchorNode = selection.anchorNode;
+    const focusNode = selection.focusNode;
+    const container = sourceEl?.contains(anchorNode) && sourceEl?.contains(focusNode)
+      ? sourceEl
+      : translationEl?.contains(anchorNode) && translationEl?.contains(focusNode)
+        ? translationEl
+        : null;
+    if (!container) return null;
+
+    const text = normalizeVideoCaptionText(selection.toString()).slice(0, 240);
+    if (!text || text.length < 2) return null;
+    const range = selection.getRangeAt(0);
+    const rect = range.getBoundingClientRect();
+    if (!rect.width && !rect.height) return null;
+    return {
+      text,
+      context: normalizeVideoCaptionText(container.textContent),
+      direction: container.classList.contains('ib-video-subtitle-source') ? 'source' : 'translation',
+      rect
+    };
+  }
+
+  function startVideoSubtitleWordHover(overlay, wordEl, usePhrase) {
+    hideVideoSubtitleWordTooltip(overlay, { force: true });
+    videoSubtitleWordHoverEl = wordEl;
+    videoSubtitleWordHoverUsesPhrase = usePhrase;
+
+    const phrase = usePhrase
+      ? getSmartVideoSubtitlePhrase(wordEl)
+      : { text: normalizeVideoCaptionText(wordEl.dataset.hoverWord || wordEl.textContent), elements: [wordEl] };
+    const text = phrase.text;
+    if (!text) return;
+
+    videoSubtitleWordHoverEls = phrase.elements;
+    for (const element of videoSubtitleWordHoverEls) {
+      element.classList.add(usePhrase ? 'is-phrase-hovered' : 'is-hovered');
+    }
+
+    const first = phrase.elements[0] || wordEl;
+    const last = phrase.elements.at(-1) || wordEl;
+    const range = document.createRange();
+    range.setStartBefore(first);
+    range.setEndAfter(last);
+    const rect = range.getBoundingClientRect();
+    const direction = wordEl.dataset.hoverDirection || 'source';
+    const contextContainer = wordEl.closest('.ib-video-subtitle-source, .ib-video-subtitle-translation');
+    const context = normalizeVideoCaptionText(contextContainer?.textContent || '');
+    const mode = usePhrase ? 'phrase' : 'word';
+    const seq = ++videoSubtitleWordHoverSeq;
+
+    videoSubtitleWordHoverTimer = window.setTimeout(async () => {
+      if (wordEl !== videoSubtitleWordHoverEl || seq !== videoSubtitleWordHoverSeq) return;
+      const tooltip = overlay.querySelector('.ib-video-subtitle-word-tooltip');
+      if (!tooltip) return;
+      positionVideoSubtitleWordTooltip(overlay, tooltip, rect);
+      renderVideoSubtitleWordTooltip(tooltip, text, 'Đang dịch…', mode);
+
+      const translated = await requestVideoSubtitleTermTranslation({ text, context, direction, mode });
+      if (wordEl !== videoSubtitleWordHoverEl || seq !== videoSubtitleWordHoverSeq) return;
+      renderVideoSubtitleWordTooltip(tooltip, text, translated.result || translated.error, mode);
+    }, usePhrase ? 100 : 120);
+  }
+
+  function releaseVideoSubtitleHoverPause() {
+    clearTimeout(videoSubtitleHoverResumeTimer);
+    videoSubtitleHoverResumeTimer = null;
+
+    const state = videoSubtitleHoverPauseState;
+    videoSubtitleHoverPauseState = null;
+    if (!state) return;
+
+    if (state.onPlay) state.video.removeEventListener('play', state.onPlay);
+    if (state.shouldResume && state.video.isConnected && state.video.paused && !state.video.ended) {
+      void state.video.play().catch(() => {});
+    }
+  }
+
+  function pauseVideoForSubtitleHover() {
+    clearTimeout(videoSubtitleHoverResumeTimer);
+    videoSubtitleHoverResumeTimer = null;
+
+    const video = getPrimaryVideo();
+    if (!video || video.ended) return;
+    if (videoSubtitleHoverPauseState?.video === video) return;
+    if (videoSubtitleHoverPauseState) releaseVideoSubtitleHoverPause();
+
+    const state = {
+      video,
+      shouldResume: !video.paused,
+      onPlay: null
+    };
+    state.onPlay = () => {
+      if (videoSubtitleHoverPauseState === state) state.shouldResume = false;
+    };
+    video.addEventListener('play', state.onPlay, { once: true });
+    videoSubtitleHoverPauseState = state;
+    if (state.shouldResume) video.pause();
+  }
+
+  function scheduleVideoSubtitleHoverResume() {
+    clearTimeout(videoSubtitleHoverResumeTimer);
+    videoSubtitleHoverResumeTimer = window.setTimeout(() => {
+      videoSubtitleHoverResumeTimer = null;
+      releaseVideoSubtitleHoverPause();
+    }, 90);
+  }
+
+  function bindVideoSubtitleWordHover(overlay) {
+    if (!overlay || overlay.dataset.wordHoverBound === 'true') return;
+    overlay.dataset.wordHoverBound = 'true';
+
+    for (const container of overlay.querySelectorAll('.ib-video-subtitle-source, .ib-video-subtitle-translation')) {
+      container.addEventListener('pointerenter', pauseVideoForSubtitleHover);
+      container.addEventListener('pointerleave', scheduleVideoSubtitleHoverResume);
+      container.addEventListener('pointercancel', scheduleVideoSubtitleHoverResume);
+    }
+
+    overlay.addEventListener('pointermove', (event) => {
+      if (videoSubtitleSelectionActive) return;
+      const wordEl = event.target?.closest?.('.ib-video-subtitle-word-hover') || null;
+      const usePhrase = Boolean(event.shiftKey);
+      if (wordEl === videoSubtitleWordHoverEl && usePhrase === videoSubtitleWordHoverUsesPhrase) return;
+      if (!wordEl) {
+        hideVideoSubtitleWordTooltip(overlay);
+        return;
+      }
+      startVideoSubtitleWordHover(overlay, wordEl, usePhrase);
+    });
+
+    overlay.addEventListener('pointerdown', (event) => {
+      if (!event.target?.closest?.('.ib-video-subtitle-source, .ib-video-subtitle-translation')) return;
+      hideVideoSubtitleWordTooltip(overlay, { force: true });
+    });
+
+    overlay.addEventListener('pointerup', () => {
+      window.setTimeout(async () => {
+        const payload = getVideoSubtitleSelectionPayload(overlay);
+        if (!payload) return;
+        hideVideoSubtitleWordTooltip(overlay, { force: true });
+        videoSubtitleSelectionActive = true;
+        const seq = ++videoSubtitleWordHoverSeq;
+        const tooltip = overlay.querySelector('.ib-video-subtitle-word-tooltip');
+        if (!tooltip) return;
+        positionVideoSubtitleWordTooltip(overlay, tooltip, payload.rect);
+        renderVideoSubtitleWordTooltip(tooltip, payload.text, 'Đang dịch…', 'selection');
+        const translated = await requestVideoSubtitleTermTranslation({ ...payload, mode: 'selection' });
+        if (!videoSubtitleSelectionActive || seq !== videoSubtitleWordHoverSeq) return;
+        renderVideoSubtitleWordTooltip(tooltip, payload.text, translated.result || translated.error, 'selection');
+      }, 0);
+    });
+
+    const refreshShiftMode = (event) => {
+      if (event.key !== 'Shift' || event.repeat || videoSubtitleSelectionActive) return;
+      const wordEl = videoSubtitleWordHoverEl;
+      if (!wordEl?.isConnected) return;
+      startVideoSubtitleWordHover(overlay, wordEl, event.type === 'keydown');
+    };
+    window.addEventListener('keydown', refreshShiftMode, true);
+    window.addEventListener('keyup', refreshShiftMode, true);
+
+    document.addEventListener('selectionchange', () => {
+      if (!videoSubtitleSelectionActive) return;
+      const selection = window.getSelection?.();
+      if (!selection || selection.isCollapsed || !getVideoSubtitleSelectionPayload(overlay)) {
+        hideVideoSubtitleWordTooltip(overlay, { force: true });
+      }
+    });
+
+    overlay.addEventListener('pointerleave', () => hideVideoSubtitleWordTooltip(overlay));
+    overlay.addEventListener('pointercancel', () => hideVideoSubtitleWordTooltip(overlay));
+  }
+
+  function renderVideoSubtitleKaraokeText(container, value, sameCue = false) {
+    if (!container || container.dataset.karaokeText === value) return;
+
+    const previousValue = container.dataset.karaokeText || "";
+    const previousActiveIndex = videoSubtitleKaraokeActiveIndex;
+    const growingCaption = Boolean(previousValue && value.startsWith(previousValue));
+    container.dataset.karaokeText = value;
+    container.replaceChildren();
+    let wordIndex = 0;
+    for (const segment of segmentVideoSubtitleText(value)) {
+      if (!segment.isWord) {
+        container.appendChild(document.createTextNode(segment.text));
+        continue;
+      }
+
+      const word = document.createElement("span");
+      word.className = "ib-video-subtitle-word ib-video-subtitle-word-hover";
+      word.dataset.hoverDirection = "translation";
+      word.dataset.hoverWord = segment.text;
+      word.dataset.wordIndex = String(wordIndex++);
+      word.textContent = segment.text;
+      container.appendChild(word);
+    }
+
+    container.dataset.wordCount = String(wordIndex);
+    videoSubtitleKaraokeActiveIndex = (sameCue || growingCaption) && previousActiveIndex >= 0
+      ? Math.min(previousActiveIndex, wordIndex - 1)
+      : -1;
+  }
+
+  function segmentVideoSubtitleText(value) {
+    const text = String(value || "");
+    if (!text) return [];
+
+    try {
+      const locale = LANGUAGE_CATALOG?.codeFor(
+        settings.videoSubtitleTargetLanguage || "Vietnamese",
+        "en"
+      ) || "en";
+      const segmenter = new Intl.Segmenter(locale, { granularity: "word" });
+      return [...segmenter.segment(text)].map((segment) => ({
+        text: segment.segment,
+        isWord: Boolean(segment.isWordLike)
+      }));
+    } catch {
+      return (text.match(/[\p{L}\p{M}\p{N}]+(?:['’\-][\p{L}\p{M}\p{N}]+)*|\s+|./gu) || [])
+        .map((segment) => ({
+          text: segment,
+          isWord: /[\p{L}\p{N}]/u.test(segment)
+        }));
+    }
+  }
+
+  function getVideoSubtitleWords(value) {
+    return segmentVideoSubtitleText(value)
+      .filter((segment) => segment.isWord)
+      .map((segment) => normalizeVideoSubtitleWord(segment.text))
+      .filter(Boolean);
+  }
+
+  function normalizeVideoSubtitleWord(value) {
+    return String(value || "")
+      .normalize("NFKC")
+      .toLocaleLowerCase()
+      .replace(/[^\p{L}\p{M}\p{N}]+/gu, "")
+      .trim();
+  }
+
+  function findVideoSubtitleCandidateWordIndex(displayText, candidateText) {
+    const displayed = getVideoSubtitleWords(displayText);
+    const candidate = getVideoSubtitleWords(candidateText);
+    if (!displayed.length || !candidate.length) return -1;
+
+    const comparableLength = Math.min(displayed.length, candidate.length);
+    let prefixLength = 0;
+    while (
+      prefixLength < comparableLength
+      && displayed[prefixLength] === candidate[prefixLength]
+    ) {
+      prefixLength += 1;
+    }
+
+    const requiredPrefix = comparableLength <= 2 ? 1 : 2;
+    if (prefixLength >= requiredPrefix) {
+      return Math.min(displayed.length - 1, candidate.length - 1);
+    }
+
+    let bestLength = 0;
+    let bestDisplayEnd = -1;
+    for (let displayStart = 0; displayStart < displayed.length; displayStart += 1) {
+      for (let candidateStart = 0; candidateStart < candidate.length; candidateStart += 1) {
+        let length = 0;
+        while (
+          displayStart + length < displayed.length
+          && candidateStart + length < candidate.length
+          && displayed[displayStart + length] === candidate[candidateStart + length]
+        ) {
+          length += 1;
+        }
+        if (length > bestLength) {
+          bestLength = length;
+          bestDisplayEnd = displayStart + length - 1;
+        }
+      }
+    }
+
+    return bestLength >= 3 ? bestDisplayEnd : -1;
+  }
+
+  function teardownVideoSubtitleAudioVad() {
+    try { videoSubtitleVadSource?.disconnect(); } catch {}
+    try { videoSubtitleVadHighpass?.disconnect(); } catch {}
+    try { videoSubtitleVadLowpass?.disconnect(); } catch {}
+    try { videoSubtitleVadAnalyser?.disconnect(); } catch {}
+    try { videoSubtitleVadStream?.getTracks?.().forEach((track) => track.stop()); } catch {}
+    try { videoSubtitleVadAudioContext?.close?.(); } catch {}
+
+    videoSubtitleVadAudioContext = null;
+    videoSubtitleVadStream = null;
+    videoSubtitleVadSource = null;
+    videoSubtitleVadHighpass = null;
+    videoSubtitleVadLowpass = null;
+    videoSubtitleVadAnalyser = null;
+    videoSubtitleVadBuffer = null;
+    videoSubtitleVadVideo = null;
+    videoSubtitleVadAvailable = false;
+    videoSubtitleVadSpeaking = true;
+    videoSubtitleVadNoiseFloor = 0.012;
+    videoSubtitleVadPeak = 0.06;
+    videoSubtitleVadRms = 0;
+    videoSubtitleVadThreshold = 0.025;
+    videoSubtitleVadSilenceSince = 0;
+    videoSubtitleVadLastSampleAt = 0;
+    videoSubtitleSpeechClockMs = 0;
+    videoSubtitleSpeechClockLastAt = 0;
+  }
+
+  function ensureVideoSubtitleAudioVad(video, now = performance.now()) {
+    if (!video) return false;
+    if (videoSubtitleVadVideo === video && videoSubtitleVadAnalyser) return true;
+    if (now < videoSubtitleVadRetryAfter) return false;
+
+    teardownVideoSubtitleAudioVad();
+    try {
+      const capture = video.captureStream || video.mozCaptureStream;
+      const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+      if (typeof capture !== "function" || typeof AudioContextCtor !== "function") {
+        videoSubtitleVadRetryAfter = now + 10000;
+        return false;
+      }
+
+      const stream = capture.call(video);
+      if (!stream?.getAudioTracks?.().length) {
+        stream?.getTracks?.().forEach((track) => track.stop());
+        videoSubtitleVadRetryAfter = now + 5000;
+        return false;
+      }
+
+      const context = new AudioContextCtor({ latencyHint: "interactive" });
+      const source = context.createMediaStreamSource(stream);
+      const highpass = context.createBiquadFilter();
+      highpass.type = "highpass";
+      highpass.frequency.value = 110;
+      const lowpass = context.createBiquadFilter();
+      lowpass.type = "lowpass";
+      lowpass.frequency.value = 4200;
+      const analyser = context.createAnalyser();
+      analyser.fftSize = 512;
+      analyser.smoothingTimeConstant = 0.18;
+      source.connect(highpass);
+      highpass.connect(lowpass);
+      lowpass.connect(analyser);
+
+      videoSubtitleVadAudioContext = context;
+      videoSubtitleVadStream = stream;
+      videoSubtitleVadSource = source;
+      videoSubtitleVadHighpass = highpass;
+      videoSubtitleVadLowpass = lowpass;
+      videoSubtitleVadAnalyser = analyser;
+      videoSubtitleVadBuffer = new Float32Array(analyser.fftSize);
+      videoSubtitleVadVideo = video;
+      videoSubtitleVadRetryAfter = 0;
+      void context.resume?.().catch(() => {});
+      return true;
+    } catch {
+      teardownVideoSubtitleAudioVad();
+      videoSubtitleVadRetryAfter = now + 5000;
+      return false;
+    }
+  }
+
+  function sampleVideoSubtitleSpeechActivity(video, now = performance.now()) {
+    const elapsed = videoSubtitleSpeechClockLastAt
+      ? Math.max(0, Math.min(250, now - videoSubtitleSpeechClockLastAt))
+      : 0;
+    videoSubtitleSpeechClockLastAt = now;
+
+    const canAnalyze = ensureVideoSubtitleAudioVad(video, now)
+      && videoSubtitleVadAudioContext?.state !== "suspended"
+      && videoSubtitleVadAnalyser
+      && videoSubtitleVadBuffer
+      && !video.muted
+      && Number(video.volume || 0) > 0;
+
+    if (videoSubtitleVadAudioContext?.state === "suspended") {
+      void videoSubtitleVadAudioContext.resume?.().catch(() => {});
+    }
+
+    if (canAnalyze && now - videoSubtitleVadLastSampleAt >= 28) {
+      videoSubtitleVadLastSampleAt = now;
+      videoSubtitleVadAnalyser.getFloatTimeDomainData(videoSubtitleVadBuffer);
+      let sumSquares = 0;
+      for (const sample of videoSubtitleVadBuffer) sumSquares += sample * sample;
+      const rms = Math.sqrt(sumSquares / Math.max(1, videoSubtitleVadBuffer.length));
+      videoSubtitleVadRms = rms;
+
+      if (rms >= VIDEO_SUBTITLE_VAD_MIN_ENERGY) videoSubtitleVadAvailable = true;
+      videoSubtitleVadPeak = Math.max(rms, videoSubtitleVadPeak * 0.992);
+      if (rms <= videoSubtitleVadNoiseFloor * 1.35) {
+        videoSubtitleVadNoiseFloor = (videoSubtitleVadNoiseFloor * 0.86) + (rms * 0.14);
+      } else {
+        videoSubtitleVadNoiseFloor = Math.min(
+          videoSubtitleVadNoiseFloor + 0.000025,
+          Math.max(0.014, videoSubtitleVadPeak * 0.48)
+        );
+      }
+
+      videoSubtitleVadThreshold = videoSubtitleVadNoiseFloor
+        + Math.max(0.007, (videoSubtitleVadPeak - videoSubtitleVadNoiseFloor) * 0.24);
+      const hasVoiceEnergy = rms >= videoSubtitleVadThreshold;
+      if (hasVoiceEnergy) {
+        videoSubtitleVadSpeaking = true;
+        videoSubtitleVadSilenceSince = 0;
+      } else if (!videoSubtitleVadSilenceSince) {
+        videoSubtitleVadSilenceSince = now;
+      } else if (now - videoSubtitleVadSilenceSince >= VIDEO_SUBTITLE_VAD_SILENCE_HOLD_MS) {
+        videoSubtitleVadSpeaking = false;
+      }
+    }
+
+    const shouldAdvanceClock = !video.paused
+      && (!videoSubtitleVadAvailable || !canAnalyze || videoSubtitleVadSpeaking);
+    if (shouldAdvanceClock) {
+      videoSubtitleSpeechClockMs += elapsed * Math.max(0.25, Number(video.playbackRate || 1));
+    }
+
+    return {
+      available: Boolean(videoSubtitleVadAvailable && canAnalyze),
+      speaking: Boolean(videoSubtitleVadSpeaking),
+      rms: videoSubtitleVadRms,
+      threshold: videoSubtitleVadThreshold,
+      clock: videoSubtitleSpeechClockMs
+    };
+  }
+
+  function getCueSegmentWordTimes(cue) {
+    if (!cue || !Array.isArray(cue.segments) || cue.segments.length < 1) return [];
+    const timed = cue.segments
+      .map((segment, index) => ({
+        index,
+        text: String(segment?.text || ""),
+        start: Number(cue.start || 0) + Math.max(0, Number(segment?.offset || 0))
+      }))
+      .filter((segment) => getVideoSubtitleWords(segment.text).length > 0)
+      .sort((left, right) => left.start - right.start || left.index - right.index);
+    if (!timed.length || !timed.some((segment) => segment.start > Number(cue.start || 0) + 0.001)) {
+      return [];
+    }
+
+    const times = [];
+    for (let index = 0; index < timed.length; index += 1) {
+      const segment = timed[index];
+      const words = getVideoSubtitleWords(segment.text);
+      const nextStart = index + 1 < timed.length
+        ? timed[index + 1].start
+        : Math.max(segment.start + 0.18, Number(cue.end || segment.start + 0.5));
+      const availableSpan = Math.max(0.08, nextStart - segment.start);
+      const naturalSpeechSpan = Math.max(0.12, words.length * 0.27);
+      const speechSpan = Math.min(availableSpan, naturalSpeechSpan);
+      for (let wordIndex = 0; wordIndex < words.length; wordIndex += 1) {
+        times.push(segment.start + (speechSpan * wordIndex) / Math.max(1, words.length));
+      }
+    }
+    return times;
+  }
+
+  function projectCueWordTimes(sourceTimes, targetWordCount) {
+    if (!Array.isArray(sourceTimes) || !sourceTimes.length || targetWordCount < 1) return null;
+    if (sourceTimes.length === 1) return Array(targetWordCount).fill(sourceTimes[0]);
+    if (targetWordCount === 1) return [sourceTimes[0]];
+
+    const projected = [];
+    for (let index = 0; index < targetWordCount; index += 1) {
+      const position = (index / (targetWordCount - 1)) * (sourceTimes.length - 1);
+      const leftIndex = Math.floor(position);
+      const rightIndex = Math.min(sourceTimes.length - 1, Math.ceil(position));
+      const fraction = position - leftIndex;
+      projected.push(
+        sourceTimes[leftIndex]
+        + (sourceTimes[rightIndex] - sourceTimes[leftIndex]) * fraction
+      );
+    }
+    return projected;
+  }
+
+  function getVideoSubtitlePauseAfterWord(displayText, wordIndex) {
+    if (wordIndex < 0) return 0;
+
+    let currentWordIndex = -1;
+    let trailingText = "";
+    for (const segment of segmentVideoSubtitleText(displayText)) {
+      if (segment.isWord) {
+        currentWordIndex += 1;
+        if (currentWordIndex > wordIndex) break;
+        continue;
+      }
+      if (currentWordIndex === wordIndex) trailingText += segment.text;
+    }
+
+    if (/\.{3}|…/u.test(trailingText)) return 520;
+    if (/[.!?。！？]/u.test(trailingText)) return 360;
+    if (/[;:；：]/u.test(trailingText)) return 220;
+    if (/[,，]/u.test(trailingText)) return 140;
+    if (/[—–-]/u.test(trailingText)) return 170;
+    return 0;
+  }
+
+  function resolveLiveVideoSubtitleKaraokeIndex(targetIndex, displayText, candidateText, wordCount) {
+    const now = performance.now();
+    const speechNow = videoSubtitleSpeechClockMs;
+    const candidateWords = getVideoSubtitleWords(candidateText);
+
+    // Cue identity owns resets. Text may be retranslated inside the same cue.
+    videoSubtitleLiveKaraokeDisplayText = displayText;
+
+    if (candidateText && candidateText !== videoSubtitleLiveKaraokeCandidate) {
+      const nextWordCount = candidateWords.length;
+      const addedWords = nextWordCount - videoSubtitleLiveKaraokeCandidateWordCount;
+      const elapsed = now - videoSubtitleLiveKaraokeLastArrivalAt;
+
+      if (addedWords > 0 && elapsed >= 55 && elapsed <= 2200) {
+        const sample = Math.max(150, Math.min(520, elapsed / addedWords));
+        videoSubtitleLiveKaraokeMsPerWord = (videoSubtitleLiveKaraokeMsPerWord * 0.78) + (sample * 0.22);
+      }
+
+      videoSubtitleLiveKaraokeCandidate = candidateText;
+      videoSubtitleLiveKaraokeCandidateWordCount = nextWordCount;
+      videoSubtitleLiveKaraokeLastArrivalAt = now;
+    }
+
+    videoSubtitleLiveKaraokeTargetIndex = Math.max(
+      videoSubtitleLiveKaraokeTargetIndex,
+      Math.min(wordCount - 1, targetIndex)
+    );
+
+    const cueSpeechStartedAt = Number(videoPlayerCaptionCandidateSpeechClockStartedAt || 0);
+    const baseWordMs = Math.max(145, Math.min(540, videoSubtitleLiveKaraokeMsPerWord));
+    const syncLeadMs = Math.max(
+      280,
+      Math.min(620, baseWordMs * VIDEO_SUBTITLE_LIVE_SYNC_LEAD_WORDS)
+    );
+    let remainingSpeechMs = Math.max(
+      0,
+      speechNow - cueSpeechStartedAt + syncLeadMs
+    );
+    let estimatedIndex = 0;
+    const maxIndex = Math.max(0, videoSubtitleLiveKaraokeTargetIndex);
+
+    while (estimatedIndex < maxIndex) {
+      const stepMs = baseWordMs + getVideoSubtitlePauseAfterWord(displayText, estimatedIndex);
+      if (remainingSpeechMs < stepMs) break;
+      remainingSpeechMs -= stepMs;
+      estimatedIndex += 1;
+    }
+
+    videoSubtitleKaraokeActiveIndex = videoSubtitleKaraokeActiveIndex < 0
+      ? estimatedIndex
+      : Math.max(videoSubtitleKaraokeActiveIndex, estimatedIndex);
+    videoSubtitleLiveKaraokeNextStepAt = speechNow + Math.max(0, baseWordMs - remainingSpeechMs);
+
+    // The cue speech clock starts before translation rendering. This lets a
+    // late translation enter at the word currently being spoken instead of
+    // replaying the sentence from its first word and staying behind.
+    return Math.min(wordCount - 1, videoSubtitleKaraokeActiveIndex);
+  }
+
+  function cleanString(str) {
+    return String(str || "").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+  }
+
+  function calculateKaraokeIndexForCue(cue, video, words, displayText, fallbackTimingCue = null) {
+    if (!cue || !video || words.length < 1) return -1;
+
+    const currentTime = Number(video.currentTime || 0);
+    const adjustedTime = currentTime + VIDEO_SUBTITLE_SYNC_OFFSET;
+
+    // 1. Use real YouTube segment offsets whenever they are available.
+    // If the rendered text is translated, project the source speech pauses
+    // onto the translated word count instead of flattening the whole cue.
+    let wordTimes = null;
+    const cueSegmentTimes = getCueSegmentWordTimes(cue);
+    const cueSegmentText = Array.isArray(cue.segments)
+      ? cue.segments.map((segment) => segment?.text || "").join("")
+      : "";
+    if (
+      cueSegmentTimes.length
+      && cleanString(cueSegmentText) === cleanString(displayText)
+    ) {
+      wordTimes = projectCueWordTimes(cueSegmentTimes, words.length);
+    }
+
+    if (!wordTimes && fallbackTimingCue) {
+      const sourceSegmentTimes = getCueSegmentWordTimes(fallbackTimingCue);
+      if (sourceSegmentTimes.length) {
+        wordTimes = projectCueWordTimes(sourceSegmentTimes, words.length);
+      }
+    }
+
+    // 2. If no segment timing is available, fall back to weighted interpolation
+    if (!wordTimes) {
+      const weights = words.map((word) => {
+        const text = word.textContent || "";
+        let weight = text.length;
+        const nextNode = word.nextSibling;
+        if (nextNode && nextNode.nodeType === 3 /* Node.TEXT_NODE */) {
+          const nextText = nextNode.textContent || "";
+          const trimmed = nextText.trim();
+          if (trimmed) {
+            const firstChar = trimmed[0];
+            if (/[.!?]/.test(firstChar)) {
+              weight += 4;
+            } else if (/,;:-/.test(firstChar)) {
+              weight += 2;
+            }
+          }
+        }
+        return Math.max(1, weight);
+      });
+
+      const totalWeight = weights.reduce((a, b) => a + b, 0);
+      if (totalWeight > 0) {
+        const duration = cue.end - cue.start;
+        const interpolatedTimes = [];
+        let accum = 0;
+        for (let i = 0; i < words.length; i++) {
+          interpolatedTimes.push(cue.start + (accum / totalWeight) * duration);
+          accum += weights[i];
+        }
+        wordTimes = interpolatedTimes;
+      }
+    }
+
+    if (wordTimes && wordTimes.length === words.length) {
+      let detectedIndex = -1;
+      for (let i = 0; i < words.length; i++) {
+        if (adjustedTime >= wordTimes[i]) {
+          detectedIndex = i;
+        }
+      }
+      
+      let finalIndex = detectedIndex;
+      if (videoSubtitleKaraokeActiveIndex >= 0) {
+        finalIndex = Math.max(videoSubtitleKaraokeActiveIndex, detectedIndex);
+      }
+      return Math.min(words.length - 1, finalIndex);
+    }
+
+    // Final fallback
+    const duration = Math.max(0.25, cue.end - cue.start);
+    const progress = Math.max(0, Math.min(0.999, (adjustedTime - cue.start) / duration));
+    const detectedIndex = Math.floor(progress * words.length);
+    let finalIndex = detectedIndex;
+    if (videoSubtitleKaraokeActiveIndex >= 0) {
+      finalIndex = Math.max(videoSubtitleKaraokeActiveIndex, detectedIndex);
+    }
+    return Math.min(words.length - 1, finalIndex);
+  }
+
+  function resolveVideoSubtitleKaraokeIndex(displayText, wordCount, translationEl) {
+    if (!displayText || wordCount < 1) return -1;
+    const video = getPrimaryVideo();
+    if (!video) return -1;
+
+    const cueStart = Number(translationEl?.dataset.karaokeStart);
+    const cueEnd = Number(translationEl?.dataset.karaokeEnd);
+    if (
+      translationEl?.dataset.karaokeMode === "timeline"
+      && Number.isFinite(cueStart)
+      && Number.isFinite(cueEnd)
+      && cueEnd > cueStart
+    ) {
+      if (video.paused) return videoSubtitleKaraokeActiveIndex;
+      const timeline = videoCaptionTranslatedTimeline.length
+        ? videoCaptionTranslatedTimeline
+        : videoCaptionTimeline;
+      const cue = timeline.find((c) => Math.abs(c.start - cueStart) < 0.01) || {
+        start: cueStart,
+        end: cueEnd,
+        segments: []
+      };
+      const sourceCue = videoCaptionTimeline.find((item) => Math.abs(item.start - cueStart) < 0.08)
+        || videoCaptionTimeline[findTimelineCueIndex(Number(video.currentTime || 0), videoCaptionTimeline)]
+        || null;
+      const words = [...translationEl.querySelectorAll(".ib-video-subtitle-word")];
+      return calculateKaraokeIndexForCue(cue, video, words, displayText, sourceCue);
+    }
+
+    const candidate = videoPlayerCaptionCandidateText || readYouTubeCaptionCandidate();
+    const matchedCandidateIndex = findVideoSubtitleCandidateWordIndex(displayText, candidate);
+    const candidateIndex = matchedCandidateIndex >= 0
+      ? matchedCandidateIndex
+      : translationEl?.dataset.karaokeMode === "live" && candidate
+        ? wordCount - 1
+        : -1;
+    if (candidateIndex >= 0) {
+      return resolveLiveVideoSubtitleKaraokeIndex(
+        candidateIndex,
+        displayText,
+        candidate,
+        wordCount
+      );
+    }
+
+    if (videoCaptionUsesPlayerTrack) {
+      return video.paused ? videoSubtitleKaraokeActiveIndex : -1;
+    }
+
+    const currentTime = Number(video.currentTime || 0);
+    const timeline = videoCaptionTranslatedTimeline.length
+      ? videoCaptionTranslatedTimeline
+      : videoCaptionTimeline;
+    const cueIndex = timeline.length ? findTimelineCueIndex(currentTime, timeline) : -1;
+    if (cueIndex >= 0) {
+      if (video.paused) return videoSubtitleKaraokeActiveIndex;
+      const cue = timeline[cueIndex];
+      const sourceIndex = videoCaptionTimeline.length
+        ? findTimelineCueIndex(currentTime, videoCaptionTimeline)
+        : -1;
+      const sourceCue = sourceIndex >= 0 ? videoCaptionTimeline[sourceIndex] : null;
+      const words = [...translationEl.querySelectorAll(".ib-video-subtitle-word")];
+      return calculateKaraokeIndexForCue(cue, video, words, displayText, sourceCue);
+    }
+
+    if (video.paused) return videoSubtitleKaraokeActiveIndex;
+    return -1;
+  }
+
+  function updateVideoSubtitleKaraoke() {
+    const overlay = videoSubtitleEl;
+    const translationEl = overlay?.querySelector(".ib-video-subtitle-translation");
+    if (!overlay || !translationEl || overlay.style.display !== "flex") return;
+
+    const video = getPrimaryVideo();
+    if (video) {
+      if (translationEl.dataset.karaokeMode === "live") {
+        const vadState = sampleVideoSubtitleSpeechActivity(video);
+        translationEl.dataset.vadAvailable = String(Boolean(vadState.available));
+        translationEl.dataset.vadSpeaking = String(Boolean(vadState.speaking));
+        translationEl.dataset.vadRms = vadState.rms.toFixed(4);
+        translationEl.dataset.vadThreshold = vadState.threshold.toFixed(4);
+        translationEl.dataset.speechClock = Math.round(vadState.clock).toString();
+      } else {
+        if (videoSubtitleVadAnalyser) teardownVideoSubtitleAudioVad();
+        delete translationEl.dataset.vadAvailable;
+        delete translationEl.dataset.vadSpeaking;
+        delete translationEl.dataset.vadRms;
+        delete translationEl.dataset.vadThreshold;
+        delete translationEl.dataset.speechClock;
+      }
+      const currentTime = Number(video.currentTime || 0);
+      if (currentTime < videoSubtitleLastCurrentTime - 0.1) {
+        videoSubtitleKaraokeActiveIndex = -1;
+      }
+      videoSubtitleLastCurrentTime = currentTime;
+    }
+
+    const words = [...translationEl.querySelectorAll(".ib-video-subtitle-word")];
+    const displayText = translationEl.dataset.karaokeText || translationEl.textContent || "";
+    const previousActiveIndex = videoSubtitleKaraokeActiveIndex;
+    const resolvedIndex = resolveVideoSubtitleKaraokeIndex(displayText, words.length, translationEl);
+    const activeIndex = previousActiveIndex >= 0 && resolvedIndex >= 0
+      ? Math.max(previousActiveIndex, resolvedIndex)
+      : resolvedIndex;
+    if (
+      activeIndex === previousActiveIndex
+      && Number(translationEl.dataset.activeWordIndex ?? -1) === activeIndex
+    ) {
+      return;
+    }
+
+    if (activeIndex < previousActiveIndex && previousActiveIndex >= 0 && activeIndex >= 0) {
+      console.warn(`[InputBridge] Index decreased from ${previousActiveIndex} to ${activeIndex}. CueId: ${currentVideoSubtitleCueId}`);
+    }
+
+    videoSubtitleKaraokeActiveIndex = activeIndex;
+    translationEl.dataset.activeWordIndex = String(activeIndex);
+    words.forEach((word, index) => {
+      word.classList.toggle("is-active", index === activeIndex);
+      word.classList.toggle("is-spoken", activeIndex >= 0 && index < activeIndex);
+    });
+  }
+
+  function isExtensionOrphaned() {
+    try {
+      return !chrome.runtime?.id;
+    } catch {
+      return true;
+    }
+  }
+
+  function checkAndTeardownIfOrphaned() {
+    if (isExtensionOrphaned()) {
+      teardownExtension();
+      return true;
+    }
+    return false;
+  }
+
+  function teardownExtension() {
+    console.log("[InputBridge] Orphaned extension script detected. Tearing down...");
+    
+    stopVideoSubtitleKaraokeLoop();
+    if (youtubeVideoControlSyncFrame) cancelAnimationFrame(youtubeVideoControlSyncFrame);
+    if (videoSubtitleTimer) clearTimeout(videoSubtitleTimer);
+    if (videoSubtitleEmptyTimer) clearTimeout(videoSubtitleEmptyTimer);
+    teardownVideoSubtitleAudioVad();
+    
+    videoSubtitleObserver?.disconnect();
+    youtubeVideoControlObserver?.disconnect();
+
+    window.removeEventListener("scroll", onViewportScroll, true);
+    window.removeEventListener("resize", repositionAll, true);
+    window.removeEventListener("message", onVideoCaptionBridgeMessage);
+    document.removeEventListener("pointerdown", onYouTubeControlDocumentPointerDown, true);
+    document.removeEventListener("keydown", onYouTubeControlDocumentKeyDown, true);
+    document.removeEventListener("yt-navigate-finish", onYouTubeVideoControlNavigation, true);
+    document.removeEventListener("yt-navigate-finish", onVideoSubtitleNavigation, true);
+    document.removeEventListener("fullscreenchange", onVideoSubtitleFullscreen, true);
+    window.removeEventListener("resize", onVideoSubtitleViewportChange, true);
+
+    try {
+      videoSubtitleEl?.remove();
+      youtubeVideoControlButtonEl?.remove();
+      youtubeVideoControlPanelEl?.remove();
+    } catch (e) {
+      console.error("[InputBridge] Error cleaning up DOM elements:", e);
+    }
+  }
+
+  function startVideoSubtitleKaraokeLoop() {
+    // The RAF id becomes stale as soon as its callback starts, so it cannot be
+    // used as the running lock. Keep a separate lock for the entire RAF chain.
+    if (videoSubtitleKaraokeLoopRunning) return;
+
+    videoSubtitleKaraokeLoopRunning = true;
+    window.__ibActiveLoopsCount = Number(window.__ibActiveLoopsCount || 0) + 1;
+
+    const tick = (now) => {
+      // This frame has fired. The running lock stays true until the whole chain stops.
+      videoSubtitleKaraokeFrame = 0;
+      if (!videoSubtitleKaraokeLoopRunning) return;
+
+      if (checkAndTeardownIfOrphaned()) return;
+
+      if (
+        !settings.enabled
+        || !settings.videoSubtitleEnabled
+        || !videoSubtitleEl?.isConnected
+        || videoSubtitleEl.style.display !== "flex"
+      ) {
+        stopVideoSubtitleKaraokeLoop();
+        return;
+      }
+
+      if (now - videoSubtitleKaraokeLastTick >= VIDEO_SUBTITLE_KARAOKE_FRAME_MS) {
+        videoSubtitleKaraokeLastTick = now;
+        void processCurrentVideoCaption();
+        updateVideoSubtitleKaraoke();
+      }
+
+      // update/process may synchronously hide the overlay and stop the loop.
+      if (videoSubtitleKaraokeLoopRunning) {
+        videoSubtitleKaraokeFrame = requestAnimationFrame(tick);
+      }
+    };
+
+    videoSubtitleKaraokeFrame = requestAnimationFrame(tick);
+  }
+
+  function stopVideoSubtitleKaraokeLoop() {
+    const wasRunning = videoSubtitleKaraokeLoopRunning;
+    videoSubtitleKaraokeLoopRunning = false;
+
+    if (videoSubtitleKaraokeFrame) {
+      cancelAnimationFrame(videoSubtitleKaraokeFrame);
+    }
+    videoSubtitleKaraokeFrame = 0;
+
+    if (wasRunning) {
+      window.__ibActiveLoopsCount = Math.max(0, Number(window.__ibActiveLoopsCount || 1) - 1);
+    }
+
+    videoSubtitleKaraokeLastTick = 0;
+    videoSubtitleLastCurrentTime = 0;
+    resetVideoSubtitleLiveKaraoke();
+  }
+
+  function setNativeVideoCaptionsHidden(hidden) {
+    document.documentElement.classList.toggle(
+      "ib-video-hide-native-captions",
+      Boolean(hidden)
+    );
+  }
+
+  function hideVideoSubtitleOverlay() {
+    stopVideoSubtitleKaraokeLoop();
+    releaseVideoSubtitleHoverPause();
+    if (videoSubtitleEl) videoSubtitleEl.style.display = "none";
+  }
+
+  function isYouTubeVideoPage() {
+    return Boolean(IS_TOP_FRAME && /(^|\.)youtube\.com$/i.test(location.hostname));
+  }
+
+  function syncYouTubeVideoControl() {
+    if (!isYouTubeVideoPage()) {
+      youtubeVideoControlObserver?.disconnect();
+      youtubeVideoControlObserver = null;
+      if (youtubeVideoControlSyncFrame) cancelAnimationFrame(youtubeVideoControlSyncFrame);
+      youtubeVideoControlSyncFrame = 0;
+      youtubeVideoControlButtonEl?.remove();
+      youtubeVideoControlPanelEl?.remove();
+      youtubeVideoControlButtonEl = null;
+      youtubeVideoControlPanelEl = null;
+      return;
+    }
+
+    if (youtubeVideoControlButtonEl?.isConnected && youtubeVideoControlPanelEl?.isConnected) {
+      updateYouTubeVideoControl();
+      return;
+    }
+
+    if (!youtubeVideoControlObserver && document.documentElement) {
+      youtubeVideoControlObserver = new MutationObserver(scheduleYouTubeVideoControlSync);
+      youtubeVideoControlObserver.observe(document.documentElement, {
+        childList: true,
+        subtree: true
+      });
+    }
+    scheduleYouTubeVideoControlSync();
+  }
+
+  function scheduleYouTubeVideoControlSync() {
+    if (youtubeVideoControlSyncFrame) return;
+    youtubeVideoControlSyncFrame = requestAnimationFrame(() => {
+      youtubeVideoControlSyncFrame = 0;
+      ensureYouTubeVideoControl();
+    });
+  }
+
+  function ensureYouTubeVideoControl() {
+    if (!isYouTubeVideoPage()) return null;
+    const player = document.querySelector(".html5-video-player");
+    const controls = player?.querySelector(".ytp-right-controls");
+    if (!player || !controls) return null;
+
+    if (!youtubeVideoControlButtonEl?.isConnected) {
+      youtubeVideoControlButtonEl = document.createElement("button");
+      youtubeVideoControlButtonEl.type = "button";
+      youtubeVideoControlButtonEl.className = "ytp-button ib-youtube-subtitle-button";
+      youtubeVideoControlButtonEl.setAttribute("aria-label", "Cài đặt phụ đề InputBridge");
+      youtubeVideoControlButtonEl.setAttribute("aria-haspopup", "dialog");
+      youtubeVideoControlButtonEl.innerHTML = `
+        <span class="ib-youtube-subtitle-button-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M4 5.5h16v11H9l-4.2 3v-3H4v-11Z"></path><path d="M8 9h3M8 12.5h5M15.5 9H17"></path></svg>
+          <b>IB</b>
+        </span>
+      `;
+      youtubeVideoControlButtonEl.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleYouTubeVideoControlPanel();
+      });
+    }
+
+    const settingsButton = controls.querySelector(".ytp-settings-button");
+    const buttonHost = settingsButton?.parentElement || controls;
+    if (youtubeVideoControlButtonEl.parentElement !== buttonHost) {
+      youtubeVideoControlButtonEl.remove();
+      buttonHost.insertBefore(youtubeVideoControlButtonEl, settingsButton || null);
+    }
+
+    if (!youtubeVideoControlPanelEl?.isConnected) {
+      youtubeVideoControlPanelEl = document.createElement("div");
+      youtubeVideoControlPanelEl.className = "ib-youtube-subtitle-panel";
+      youtubeVideoControlPanelEl.setAttribute("role", "dialog");
+      youtubeVideoControlPanelEl.setAttribute("aria-label", "Cài đặt phụ đề InputBridge");
+      youtubeVideoControlPanelEl.innerHTML = `
+        <div class="ib-youtube-panel-head">
+          <div class="ib-youtube-panel-brand">
+            <span class="ib-youtube-panel-logo">IB</span>
+            <div><strong>InputBridge</strong><small data-role="status">Đang tắt</small></div>
+          </div>
+          <label class="ib-youtube-toggle" title="Bật hoặc tắt phụ đề InputBridge">
+            <input data-role="enabled" type="checkbox">
+            <span aria-hidden="true"></span>
+          </label>
+          <button class="ib-youtube-panel-close" data-role="close" type="button" aria-label="Đóng">×</button>
+        </div>
+        <div class="ib-youtube-panel-body">
+          <label class="ib-youtube-panel-row">
+            <span>Phụ đề gốc</span>
+            <select data-role="source" aria-label="Ngôn ngữ phụ đề gốc"></select>
+          </label>
+          <label class="ib-youtube-panel-row">
+            <span>Phụ đề dịch</span>
+            <select data-role="target" aria-label="Ngôn ngữ phụ đề dịch"></select>
+          </label>
+          <label class="ib-youtube-panel-row">
+            <span>Bộ dịch dự phòng</span>
+            <select data-role="engine" aria-label="Bộ dịch dự phòng">
+              <option value="google">Google Translate</option>
+              <option value="gemini">Gemini Flash-Lite</option>
+            </select>
+          </label>
+          <label class="ib-youtube-panel-check">
+            <input data-role="bilingual" type="checkbox">
+            <span>Hiện song ngữ</span>
+          </label>
+        </div>
+        <div class="ib-youtube-panel-footer">
+          <button data-role="full-settings" type="button">Cài đặt đầy đủ</button>
+        </div>
+      `;
+      youtubeVideoControlPanelEl.addEventListener("pointerdown", (event) => event.stopPropagation());
+      youtubeVideoControlPanelEl.addEventListener("click", (event) => event.stopPropagation());
+      bindYouTubeVideoControlPanel();
+    }
+
+    if (youtubeVideoControlPanelEl.parentElement !== player) {
+      youtubeVideoControlPanelEl.remove();
+      player.appendChild(youtubeVideoControlPanelEl);
+    }
+
+    youtubeVideoControlObserver?.disconnect();
+    youtubeVideoControlObserver = null;
+    updateYouTubeVideoControl();
+    return youtubeVideoControlPanelEl;
+  }
+
+  function bindYouTubeVideoControlPanel() {
+    const panel = youtubeVideoControlPanelEl;
+    if (!panel) return;
+
+    panel.querySelector('[data-role="close"]')?.addEventListener("click", closeYouTubeVideoControlPanel);
+    panel.querySelector('[data-role="enabled"]')?.addEventListener("change", async (event) => {
+      settings.videoSubtitleEnabled = Boolean(event.target.checked);
+      await saveSyncSettings({ videoSubtitleEnabled: settings.videoSubtitleEnabled });
+      syncVideoSubtitleFeature();
+      updateYouTubeVideoControl();
+    });
+    panel.querySelector('[data-role="source"]')?.addEventListener("change", async (event) => {
+      settings.videoSubtitleSourceLanguage = event.target.value || "auto";
+      resetVideoCaptionSession();
+      await saveSyncSettings({ videoSubtitleSourceLanguage: settings.videoSubtitleSourceLanguage });
+      syncVideoSubtitleFeature();
+      updateYouTubeVideoControl();
+    });
+    panel.querySelector('[data-role="target"]')?.addEventListener("change", async (event) => {
+      settings.videoSubtitleTargetLanguage = event.target.value || "Vietnamese";
+      resetVideoCaptionSession();
+      await saveSyncSettings({ videoSubtitleTargetLanguage: settings.videoSubtitleTargetLanguage });
+      syncVideoSubtitleFeature();
+      updateYouTubeVideoControl();
+    });
+    panel.querySelector('[data-role="engine"]')?.addEventListener("change", async (event) => {
+      settings.videoSubtitleEngine = event.target.value === "gemini" ? "gemini" : "google";
+      await saveSyncSettings({ videoSubtitleEngine: settings.videoSubtitleEngine });
+      updateYouTubeVideoControl();
+      scheduleVideoCaptionRead(0);
+    });
+    panel.querySelector('[data-role="bilingual"]')?.addEventListener("change", async (event) => {
+      settings.videoSubtitleBilingual = Boolean(event.target.checked);
+      resetVideoCaptionSession();
+      await saveSyncSettings({ videoSubtitleBilingual: settings.videoSubtitleBilingual });
+      requestYouTubeCaptionTimeline(true);
+      scheduleVideoCaptionRead(0);
+      updateYouTubeVideoControl();
+    });
+    panel.querySelector('[data-role="full-settings"]')?.addEventListener("click", () => {
+      const url = chrome.runtime?.getURL?.("popup.html") || "";
+      if (url) window.open(url, "_blank", "noopener,noreferrer");
+    });
+  }
+
+  function resetVideoCaptionSession() {
+    clearTimeout(videoSubtitleEmptyTimer);
+    videoSubtitleRequestSeq += 1;
+    lastVideoCaptionText = "";
+    lastVideoCaptionTimelineIndex = -1;
+    resetYouTubeCaptionReader();
+    videoPlayerCaptionExpiredText = "";
+    videoCaptionTimeline = [];
+    videoCaptionTranslatedTimeline = [];
+    videoCaptionTranslationEngine = "";
+    videoCaptionUsesPlayerTrack = false;
+    videoCaptionTimelineKey = "";
+    videoCaptionTimelineRequestKey = "";
+    videoCaptionTimelineLoading = false;
+    videoCaptionTimelineRetryCount = 0;
+    videoCaptionTranslations.clear();
+    videoCaptionPending.clear();
+    hideVideoSubtitleOverlay();
+  }
+
+  function populateYouTubeSourceSelect(select) {
+    if (!select) return;
+    const current = settings.videoSubtitleSourceLanguage || "auto";
+    const signature = JSON.stringify({
+      current,
+      active: videoCaptionActiveSourceLanguageCode,
+      tracks: videoCaptionAvailableTracks.map((track) => [track?.languageCode, track?.label, Boolean(track?.isAsr)])
+    });
+    if (select.dataset.signature === signature) {
+      select.value = current;
+      return;
+    }
+    select.dataset.signature = signature;
+    const fragment = document.createDocumentFragment();
+    const automatic = document.createElement("option");
+    automatic.value = "auto";
+    const activeTrack = videoCaptionAvailableTracks.find((track) =>
+      sameLanguageCodeForUi(track?.languageCode, videoCaptionActiveSourceLanguageCode)
+    );
+    automatic.textContent = activeTrack?.label
+      ? `Theo audio đang phát · ${activeTrack.label}`
+      : "Theo audio đang phát";
+    fragment.appendChild(automatic);
+
+    const original = document.createElement("option");
+    original.value = "original";
+    original.textContent = "Ngôn ngữ gốc video";
+    fragment.appendChild(original);
+
+    const seen = new Set(["auto", "original"]);
+    for (const track of videoCaptionAvailableTracks) {
+      const code = String(track?.languageCode || "").trim();
+      if (!code || seen.has(code.toLowerCase())) continue;
+      seen.add(code.toLowerCase());
+      const option = document.createElement("option");
+      option.value = code;
+      option.textContent = `${track.label || LANGUAGE_CATALOG?.nameFor(code, code) || code}${track.isAsr ? " · tự động" : ""}`;
+      fragment.appendChild(option);
+    }
+
+    if (current !== "auto" && !seen.has(current.toLowerCase())) {
+      const option = document.createElement("option");
+      option.value = current;
+      option.textContent = LANGUAGE_CATALOG?.nameFor(current, current) || current;
+      fragment.appendChild(option);
+    }
+    select.replaceChildren(fragment);
+    select.value = current;
+  }
+
+  function populateYouTubeTargetSelect(select) {
+    if (!select || select.options.length) return;
+    const fragment = document.createDocumentFragment();
+    for (const language of LANGUAGE_CATALOG?.ordered || []) {
+      const option = document.createElement("option");
+      option.value = language.name;
+      option.textContent = language.name;
+      fragment.appendChild(option);
+    }
+    select.replaceChildren(fragment);
+  }
+
+  function updateYouTubeVideoControl() {
+    const button = youtubeVideoControlButtonEl;
+    const panel = youtubeVideoControlPanelEl;
+    if (!button || !panel) return;
+
+    const enabled = Boolean(settings.enabled && settings.videoSubtitleEnabled);
+    button.classList.toggle("is-enabled", enabled);
+    button.setAttribute("aria-pressed", String(enabled));
+    button.title = enabled
+      ? `InputBridge · ${settings.videoSubtitleTargetLanguage || "Vietnamese"}`
+      : "Bật phụ đề InputBridge";
+
+    const sourceSelect = panel.querySelector('[data-role="source"]');
+    const targetSelect = panel.querySelector('[data-role="target"]');
+    populateYouTubeSourceSelect(sourceSelect);
+    populateYouTubeTargetSelect(targetSelect);
+    if (targetSelect) targetSelect.value = settings.videoSubtitleTargetLanguage || "Vietnamese";
+    const enabledInput = panel.querySelector('[data-role="enabled"]');
+    const engineSelect = panel.querySelector('[data-role="engine"]');
+    const bilingualInput = panel.querySelector('[data-role="bilingual"]');
+    if (enabledInput) enabledInput.checked = Boolean(settings.videoSubtitleEnabled);
+    if (engineSelect) engineSelect.value = settings.videoSubtitleEngine === "gemini" ? "gemini" : "google";
+    if (bilingualInput) bilingualInput.checked = Boolean(settings.videoSubtitleBilingual);
+    const status = panel.querySelector('[data-role="status"]');
+    if (status) status.textContent = enabled
+      ? `${settings.videoSubtitleTargetLanguage || "Vietnamese"} · đang chạy`
+      : "Đang tắt";
+  }
+
+  function sameLanguageCodeForUi(left, right) {
+    const first = String(left || "").toLowerCase().replace(/_/g, "-");
+    const second = String(right || "").toLowerCase().replace(/_/g, "-");
+    return Boolean(first && second && (first === second || first.split("-")[0] === second.split("-")[0]));
+  }
+
+  function toggleYouTubeVideoControlPanel() {
+    const panel = ensureYouTubeVideoControl();
+    if (!panel) return;
+    const open = !panel.classList.contains("is-open");
+    panel.classList.toggle("is-open", open);
+    youtubeVideoControlButtonEl?.classList.toggle("is-panel-open", open);
+    youtubeVideoControlButtonEl?.setAttribute("aria-expanded", String(open));
+    if (open) updateYouTubeVideoControl();
+  }
+
+  function closeYouTubeVideoControlPanel() {
+    youtubeVideoControlPanelEl?.classList.remove("is-open");
+    youtubeVideoControlButtonEl?.classList.remove("is-panel-open");
+    youtubeVideoControlButtonEl?.setAttribute("aria-expanded", "false");
+  }
+
+  function onYouTubeVideoControlNavigation() {
+    scheduleYouTubeVideoControlSync();
+    window.setTimeout(scheduleYouTubeVideoControlSync, 180);
+    window.setTimeout(scheduleYouTubeVideoControlSync, 700);
+  }
+
+  function onYouTubeControlDocumentPointerDown(event) {
+    if (!youtubeVideoControlPanelEl?.classList.contains("is-open")) return;
+    const target = event.target instanceof Node ? event.target : null;
+    if (target && (youtubeVideoControlPanelEl.contains(target) || youtubeVideoControlButtonEl?.contains(target))) return;
+    closeYouTubeVideoControlPanel();
+  }
+
+  function onYouTubeControlDocumentKeyDown(event) {
+    if (event.key === "Escape") closeYouTubeVideoControlPanel();
   }
 
   function observeEventRoot(root) {
@@ -215,10 +3008,20 @@
   function onFocusIn(event) {
     const el = findEditable(event.target);
     if (!el) return;
-    activeEl = el;
-    lastOriginal = getEditableText(el);
-    currentPreview = null;
-    scheduleTransform("focus");
+
+    if (el !== activeEl) {
+      activeEl = el;
+      lastOriginal = getEditableText(el);
+      currentPreview = null;
+      scheduleTransform("focus");
+    } else {
+      const text = getEditableText(el);
+      if (text !== lastOriginal || !currentPreview) {
+        lastOriginal = text;
+        currentPreview = null;
+        scheduleTransform("focus");
+      }
+    }
   }
 
   function onFocusOut() {
@@ -326,7 +3129,7 @@
     }
 
     const target = event.target instanceof Element ? event.target : null;
-    if (!target || target.closest(".ib-preview-card, .ib-toast, .ib-selection-icon, .ib-selection-card")) return;
+    if (!target || target.closest(".ib-preview-card, .ib-toast, .ib-selection-icon, .ib-selection-card, .ib-youtube-subtitle-panel, .ib-youtube-subtitle-button")) return;
 
     const control = target.closest('button, [role="button"], input[type="submit"]');
     if (!control || !isLikelySendControl(control, activeEl)) return;
@@ -442,60 +3245,90 @@
     }, Number(settings.debounceMs || 700));
   }
 
-  async function requestTransform(text, reason, sourceEl = activeEl) {
+  function requestTransform(text, reason, sourceEl = activeEl) {
     const originalAtRequest = text;
     const seq = ++requestSeq;
     if (sourceEl && !activeEl) activeEl = sourceEl;
     renderTypingIndicator();
 
-    const response = await sendMessage({
-      type: "IB_TRANSFORM",
-      text: originalAtRequest,
-      mode: settings.mode,
-      tone: settings.tone,
-      targetLanguage: settings.targetLanguage,
-      origin: getPageOrigin(),
-      contextHint: getContextHint()
-    });
+    return new Promise((resolve) => {
+      streamTransform({
+        text: originalAtRequest,
+        mode: settings.mode,
+        tone: settings.tone,
+        targetLanguage: settings.targetLanguage,
+        origin: getPageOrigin(),
+        contextHint: getContextHint()
+      }, (chunk) => {
+        if (seq !== requestSeq) return;
 
-    if (seq !== requestSeq) return null;
+        const validationEl = sourceEl?.isConnected ? sourceEl : activeEl;
+        const latest = validationEl ? getEditableText(validationEl).trim() : "";
+        if (
+          !validationEl ||
+          normalizeEditableText(latest) !== normalizeEditableText(originalAtRequest) ||
+          !shouldProcess(latest)
+        ) {
+          hidePreview();
+          return;
+        }
 
-    const validationEl = sourceEl?.isConnected ? sourceEl : activeEl;
-    const latest = validationEl ? getEditableText(validationEl).trim() : "";
-    if (
-      !validationEl ||
-      normalizeEditableText(latest) !== normalizeEditableText(originalAtRequest) ||
-      !shouldProcess(latest)
-    ) {
-      hidePreview();
-      return null;
-    }
+        renderPreview({
+          original: originalAtRequest,
+          result: chunk.result,
+          backTranslation: chunk.backTranslation,
+          warnings: chunk.warnings,
+          tone: chunk.tone,
+          status: "Preview"
+        });
+      }, (finalData) => {
+        if (seq !== requestSeq) {
+          resolve(null);
+          return;
+        }
 
-    if (!response?.ok) {
-      renderPreview({
-        original: originalAtRequest,
-        result: response?.error || "InputBridge lỗi.",
-        backTranslation: "",
-        warnings: [],
-        status: "Error"
+        const validationEl = sourceEl?.isConnected ? sourceEl : activeEl;
+        const latest = validationEl ? getEditableText(validationEl).trim() : "";
+        if (
+          !validationEl ||
+          normalizeEditableText(latest) !== normalizeEditableText(originalAtRequest) ||
+          !shouldProcess(latest)
+        ) {
+          hidePreview();
+          resolve(null);
+          return;
+        }
+
+        const preview = {
+          original: originalAtRequest,
+          result: finalData.result,
+          backTranslation: finalData.backTranslation,
+          warnings: finalData.warnings,
+          tone: finalData.tone,
+          status: finalData.demo ? "Demo" : reason === "send" ? "Ready to send" : "Preview",
+          fullRebuild: true
+        };
+
+        currentPreview = preview;
+        renderPreview(preview);
+        resolve(preview);
+      }, (error) => {
+        if (seq !== requestSeq) {
+          resolve(null);
+          return;
+        }
+
+        renderPreview({
+          original: originalAtRequest,
+          result: error,
+          backTranslation: "",
+          warnings: [],
+          status: "Error",
+          fullRebuild: true
+        });
+        resolve(null);
       });
-      return null;
-    }
-
-    const data = response.data || {};
-    const preview = {
-      original: originalAtRequest,
-      result: String(data.result || ""),
-      backTranslation: String(data.backTranslation || ""),
-      warnings: Array.isArray(data.warnings) ? data.warnings : [],
-      tone: data.tone || settings.tone,
-      demo: Boolean(response.demo),
-      status: response.demo ? "Demo" : reason === "send" ? "Ready to send" : "Preview"
-    };
-
-    currentPreview = preview;
-    renderPreview(preview);
-    return preview;
+    });
   }
 
   function handlePreviewMouseDown(event) {
@@ -540,6 +3373,39 @@
       hidePreview();
       return;
     }
+
+    const isIncremental = previewEl && previewEl.style.display !== "none" && !preview.fullRebuild;
+    if (isIncremental) {
+      const resultEl = previewEl.querySelector(".ib-result");
+      if (resultEl) {
+        resultEl.textContent = preview.result || "";
+      }
+      const backEl = previewEl.querySelector(".ib-back");
+      if (backEl) {
+        if (preview.backTranslation) {
+          backEl.innerHTML = `<b>Nghĩa ngược:</b> ${escapeHtml(preview.backTranslation)}`;
+          backEl.style.display = "block";
+        } else {
+          backEl.style.display = "none";
+        }
+      }
+
+      const resultLength = String(preview.result || "").trim().length;
+      const sizeClass = showSettingsPanel
+        ? ""
+        : resultLength <= 40
+          ? "ib-micro"
+          : (compact || resultLength <= 110)
+            ? "ib-compact"
+            : "";
+
+      previewEl.classList.remove("ib-micro", "ib-compact");
+      if (sizeClass) previewEl.classList.add(sizeClass);
+
+      positionPreview();
+      return;
+    }
+
     if (!previewEl) {
       previewEl = document.createElement("div");
       previewEl.className = "ib-preview-card";
@@ -641,7 +3507,7 @@
       settings.tone = toneVal;
       settings.targetLanguage = langVal;
 
-      await chrome.storage.sync.set({
+      await saveSyncSettings({
         mode: modeVal,
         tone: toneVal,
         targetLanguage: langVal
@@ -940,7 +3806,7 @@
 
   function onSelectionPointerDown(event) {
     const target = event.target instanceof Element ? event.target : null;
-    if (target?.closest(".ib-selection-icon, .ib-selection-card")) {
+    if (target?.closest(".ib-selection-icon, .ib-selection-card, .ib-youtube-subtitle-panel, .ib-youtube-subtitle-button")) {
       selectionInteractionUntil = Date.now() + 1000;
       return;
     }
@@ -956,7 +3822,7 @@
   function onSelectionPointerUp(event, root) {
     if (!settings?.enabled || !settings.selectionTranslation) return;
     const target = event.target instanceof Element ? event.target : null;
-    if (target?.closest(".ib-selection-icon, .ib-selection-card")) return;
+    if (target?.closest(".ib-selection-icon, .ib-selection-card, .ib-youtube-subtitle-panel, .ib-youtube-subtitle-button")) return;
 
     const pointerPoint = Number.isFinite(event.clientX) && Number.isFinite(event.clientY)
       ? { x: event.clientX, y: event.clientY }
@@ -1062,7 +3928,7 @@
   function getSelectionSnapshot(root, target) {
     if (!settings?.enabled || !settings.selectionTranslation) return null;
     const targetEl = target instanceof Element ? target : null;
-    if (targetEl?.closest(".ib-preview-card, .ib-toast, .ib-selection-icon, .ib-selection-card")) return null;
+    if (targetEl?.closest(".ib-preview-card, .ib-toast, .ib-selection-icon, .ib-selection-card, .ib-youtube-subtitle-panel, .ib-youtube-subtitle-button")) return null;
 
     const editable = findEditable(targetEl);
     if (editable && !settings.selectionAllowEditable) return null;
@@ -1098,7 +3964,7 @@
     const common = range.commonAncestorContainer instanceof Element
       ? range.commonAncestorContainer
       : range.commonAncestorContainer?.parentElement;
-    if (common?.closest?.(".ib-preview-card, .ib-toast, .ib-selection-icon, .ib-selection-card")) return null;
+    if (common?.closest?.(".ib-preview-card, .ib-toast, .ib-selection-icon, .ib-selection-card, .ib-youtube-subtitle-panel, .ib-youtube-subtitle-button")) return null;
     const rangeEditable = findEditable(common);
     if (rangeEditable && !settings.selectionAllowEditable) return null;
 
@@ -1422,7 +4288,7 @@
     selectionCardEl.querySelector('[data-ib-selection-action="favorite"]')?.addEventListener("click", () => void toggleSelectionFavorite());
     selectionCardEl.querySelector('[data-ib-selection-action="theme"]')?.addEventListener("click", () => {
       settings.selectionCardTheme = settings.selectionCardTheme === "dark" ? "light" : "dark";
-      chrome.storage.sync.set({ selectionCardTheme: settings.selectionCardTheme }).catch(() => {});
+      void saveSyncSettings({ selectionCardTheme: settings.selectionCardTheme });
       renderSelectionCard({ loading, error, result });
     });
     selectionCardEl.querySelectorAll('[data-ib-selection-action="settings"]').forEach((button) => button.addEventListener("click", () => {
@@ -1438,20 +4304,20 @@
       const nextLanguage = languageSelect.value || settings.targetLanguage;
       settings.targetLanguage = nextLanguage;
       if (selectionState) selectionState.targetLanguage = nextLanguage;
-      await chrome.storage.sync.set({ targetLanguage: nextLanguage }).catch(() => {});
+      await saveSyncSettings({ targetLanguage: nextLanguage });
       void translateSelectedText();
     }));
     triggerSelect?.addEventListener("change", () => {
       settings.selectionTrigger = triggerSelect.value;
-      chrome.storage.sync.set({ selectionTrigger: settings.selectionTrigger }).catch(() => {});
+      void saveSyncSettings({ selectionTrigger: settings.selectionTrigger });
     });
     shiftCheck?.addEventListener("change", () => {
       settings.selectionShiftTranslate = shiftCheck.checked;
-      chrome.storage.sync.set({ selectionShiftTranslate: settings.selectionShiftTranslate }).catch(() => {});
+      void saveSyncSettings({ selectionShiftTranslate: settings.selectionShiftTranslate });
     });
     editableCheck?.addEventListener("change", () => {
       settings.selectionAllowEditable = editableCheck.checked;
-      chrome.storage.sync.set({ selectionAllowEditable: settings.selectionAllowEditable }).catch(() => {});
+      void saveSyncSettings({ selectionAllowEditable: settings.selectionAllowEditable });
     });
   }
 
@@ -2055,6 +4921,28 @@
     }
   }
 
+  function saveSyncSettings(nextSettings) {
+    return new Promise((resolve) => {
+      try {
+        const syncStorage = globalThis.chrome?.storage?.sync;
+        if (!syncStorage?.set) {
+          resolve(false);
+          return;
+        }
+
+        syncStorage.set(nextSettings, () => {
+          try {
+            resolve(!globalThis.chrome?.runtime?.lastError);
+          } catch {
+            resolve(false);
+          }
+        });
+      } catch {
+        resolve(false);
+      }
+    });
+  }
+
   async function getSettings() {
     const response = await sendMessage({ type: "IB_GET_SETTINGS", origin: getPageOrigin() });
     return response?.settings || { enabled: false };
@@ -2071,6 +4959,93 @@
         resolve({ ok: false, error: error?.message || String(error) });
       }
     });
+  }
+
+  let streamPort = null;
+
+  function streamTransform(message, onChunk, onDone, onError) {
+    // Keep translation on the port path even when AI enhancement is off.
+    // The background can publish the primary Google result immediately there;
+    // the request/response path waits for optional secondary work and can hit
+    // the UI timeout before that result is returned.
+    const useRegularRequest =
+      settings?.llmProvider === "9router" && message.mode !== "translate";
+    if (useRegularRequest) {
+      let finished = false;
+      const timeout = window.setTimeout(() => {
+        if (finished) return;
+        finished = true;
+        onError(message.mode === "translate"
+          ? "Google Translate không phản hồi sau 25 giây."
+          : "9Router không phản hồi sau 25 giây.");
+      }, 25000);
+
+      sendMessage({ type: "IB_TRANSFORM", ...message }).then((response) => {
+        if (finished) return;
+        finished = true;
+        window.clearTimeout(timeout);
+        if (!response?.ok) {
+          onError(response?.error || "9Router request failed.");
+          return;
+        }
+        onDone(response.data || {});
+      });
+      return;
+    }
+
+    if (streamPort) {
+      try { streamPort.disconnect(); } catch {}
+    }
+
+    try {
+      const port = chrome.runtime.connect({ name: "ib-transform-stream" });
+      streamPort = port;
+      let hasFinished = false;
+      const timeout = window.setTimeout(() => {
+        if (hasFinished) return;
+        hasFinished = true;
+        if (streamPort === port) streamPort = null;
+        try { port.disconnect(); } catch {}
+        onError("LLM không phản hồi sau 25 giây.");
+      }, 25000);
+
+      port.onMessage.addListener((response) => {
+        if (hasFinished) return;
+        if (!response.ok) {
+          hasFinished = true;
+          window.clearTimeout(timeout);
+          onError(response.error || "Streaming error");
+          if (streamPort === port) streamPort = null;
+          try { port.disconnect(); } catch {}
+          return;
+        }
+
+        const data = response.data || {};
+        if (data.done) {
+          hasFinished = true;
+          window.clearTimeout(timeout);
+          onDone(data);
+          if (streamPort === port) streamPort = null;
+          try { port.disconnect(); } catch {}
+        } else {
+          onChunk(data);
+        }
+      });
+
+      port.onDisconnect.addListener(() => {
+        if (streamPort === port) streamPort = null;
+        if (!hasFinished) {
+          hasFinished = true;
+          window.clearTimeout(timeout);
+          onError("Kết nối với background page bị đóng.");
+        }
+      });
+
+      port.postMessage(message);
+    } catch (error) {
+      onError(error?.message || String(error));
+      streamPort = null;
+    }
   }
 
   function showToast(text) {
