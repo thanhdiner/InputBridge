@@ -230,6 +230,7 @@ let popupRequestId = 0;
 let popupDebounceTimer = null;
 let lastPopupResult = "";
 let lastDetectedSourceLanguage = "";
+let popupInputTouched = false;
 const customSelects = new Map();
 
 function parseApiKeys(value) {
@@ -280,6 +281,23 @@ async function init() {
   upgradeSelects();
   bindEvents();
   updateToolUi();
+  focusAndSelectActiveInput();
+}
+
+function focusAndSelectActiveInput() {
+  const input = getActiveEl("input");
+  if (!input) return;
+
+  const initialValue = input.value;
+  const selectInput = () => {
+    if (popupInputTouched || input.value !== initialValue || !input.isConnected) return;
+    input.focus({ preventScroll: true });
+    input.setSelectionRange(0, input.value.length);
+  };
+
+  requestAnimationFrame(selectInput);
+  [40, 120, 260].forEach((delay) => setTimeout(selectInput, delay));
+  window.addEventListener("focus", selectInput, { once: true });
 }
 
 function getActiveEl(baseId) {
@@ -357,7 +375,11 @@ function bindEvents() {
   const setupInputListeners = (inputId) => {
     const el = $(inputId);
     if (!el) return;
+    el.addEventListener("pointerdown", () => {
+      popupInputTouched = true;
+    });
     el.addEventListener("input", () => {
+      popupInputTouched = true;
       updateCharacterCount();
       if (!el.value.trim()) {
         clearPopupResult();
@@ -368,6 +390,7 @@ function bindEvents() {
     });
 
     el.addEventListener("keydown", (event) => {
+      popupInputTouched = true;
       if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
         event.preventDefault();
         runPopupTool(true);
@@ -484,6 +507,7 @@ function setActiveTool(tool) {
   if (!tool || tool === activeTool) return;
   activeTool = tool;
   updateToolUi();
+  focusAndSelectActiveInput();
   const inputVal = getActiveEl("input").value.trim();
   if (inputVal) runPopupTool(false);
 }
@@ -627,7 +651,7 @@ function renderPopupVideoDubbingVoiceSelect() {
   }
   select.replaceChildren(fragment);
   select.value = selectedVoice;
-  select.disabled = !Boolean(settings.videoDubbingEnabled);
+  select.disabled = !Boolean(settings.enabled);
   if (!voices) void ensurePopupVideoDubbingVoices(languageKey);
 }
 

@@ -73,13 +73,18 @@ const VIDEO_CAPTION_CACHE = new Map();
 const VIDEO_CAPTION_CACHE_LIMIT = 600;
 const VIDEO_DUBBING_TTS_CACHE = new Map();
 const VIDEO_DUBBING_TTS_CACHE_LIMIT = 80;
-const VIDEO_DUBBING_TTS_TIMEOUT_MS = 12000;
+const EDGE_VIDEO_DUBBING_TTS_TIMEOUT_MS = 8000;
+const GOOGLE_VIDEO_DUBBING_TTS_TIMEOUT_MS = 8000;
+const VIDEO_DUBBING_TTS_HEDGE_DELAY_MS = 3500;
+const VIDEO_DUBBING_TTS_OVERALL_TIMEOUT_MS = 14000;
 const EDGE_TTS_GATEWAY_BASE = "http://127.0.0.1:38765";
 const EDGE_TTS_TRUSTED_CLIENT_TOKEN = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
 const EDGE_TTS_VOICE_LIST_URL = `https://speech.platform.bing.com/consumer/speech/synthesize/readaloud/voices/list?trustedclienttoken=${EDGE_TTS_TRUSTED_CLIENT_TOKEN}`;
 const EDGE_TTS_VOICE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 let edgeTtsVoiceCache = null;
 let edgeTtsVoiceCacheAt = 0;
+const runWithEdgeVideoDubbingSlot = createVideoDubbingTtsLimiter(2);
+const runWithGoogleVideoDubbingSlot = createVideoDubbingTtsLimiter(3);
 const TRANSLATION_TIMEOUT_MS = 8000;
 const SELECTION_TRANSLATION_MAX_CHARS = 20000;
 const SELECTION_TRANSLATION_CHUNK_CHARS = 4000;
@@ -226,7 +231,9 @@ async function handleMessage(message, sender) {
 
   if (message.type === "IB_VIDEO_DUBBING_TTS") {
     const settings = withSiteSettings(await getSettings(), message.origin || sender?.tab?.url);
-    if (!settings.enabled || !settings.videoSubtitleEnabled || !settings.videoDubbingEnabled) {
+    const manualSession = message.manualSession === true;
+    const persistedDubbingEnabled = settings.videoSubtitleEnabled && settings.videoDubbingEnabled;
+    if (!settings.enabled || (!manualSession && !persistedDubbingEnabled)) {
       return { ok: false, error: "Video dubbing is disabled here." };
     }
     return fetchVideoDubbingTts(message);
@@ -305,7 +312,7 @@ async function handleMessage(message, sender) {
 
   if (message.type === "IB_TRANSLATE_VIDEO_CAPTION") {
     const settings = withSiteSettings(await getSettings(), message.origin || sender?.tab?.url);
-    if (!settings.enabled || !settings.videoSubtitleEnabled) {
+    if (!settings.enabled || (!settings.videoSubtitleEnabled && message.manualSession !== true)) {
       return { ok: false, error: "Video subtitle translation is disabled here." };
     }
     return translateVideoCaptionPayload(message, settings);
@@ -313,7 +320,7 @@ async function handleMessage(message, sender) {
 
   if (message.type === "IB_TRANSLATE_VIDEO_CAPTION_BATCH") {
     const settings = withSiteSettings(await getSettings(), message.origin || sender?.tab?.url);
-    if (!settings.enabled || !settings.videoSubtitleEnabled) {
+    if (!settings.enabled || (!settings.videoSubtitleEnabled && message.manualSession !== true)) {
       return { ok: false, error: "Video subtitle translation is disabled here." };
     }
     return translateVideoCaptionBatchPayload(message, settings);
@@ -1401,6 +1408,156 @@ function arrayBufferToBase64(buffer) {
   return btoa(binary);
 }
 
+function splitVideoDubbingText(text, maxChars = 180) {
+  const normalized = String(text || "").replace(/\s+/g, " ").trim();
+  if (!normalized) return [];
+  if (normalized.length <= maxChars) return [normalized];
+
+  const chunks = [];
+  let remaining = normalized;
+  while (remaining.length > maxChars) {
+    const windowText = remaining.slice(0, maxChars + 1);
+    const minimumBreak = Math.floor(maxChars * 0.55);
+    let breakAt = -1;
+    for (const pattern of [/[.!?。！？;:]/gu, /[,，、]/gu, /\s/gu]) {
+      for (const match of windowText.matchAll(pattern)) {
+        const candidate = Number(match.index || 0) + match[0].length;
+        if (candidate >= minimumBreak && candidate <= maxChars) breakAt = Math.max(breakAt, candidate);
+      }
+      if (breakAt >= minimumBreak) break;
+    }
+    if (breakAt < 1) {
+      breakAt = maxChars;
+      // Do not split between a UTF-16 surrogate pair when no natural boundary
+      // exists (common for emoji and some historic CJK characters).
+      const previousCode = remaining.charCodeAt(breakAt - 1);
+      const nextCode = remaining.charCodeAt(breakAt);
+      if (previousCode >= 0xD800 && previousCode <= 0xDBFF && nextCode >= 0xDC00 && nextCode <= 0xDFFF) {
+        breakAt -= 1;
+      }
+    }
+    chunks.push(remaining.slice(0, breakAt).trim());
+    remaining = remaining.slice(breakAt).trim();
+  }
+  if (remaining) chunks.push(remaining);
+  return chunks.filter(Boolean);
+}
+
+function joinVideoDubbingAudioBuffers(buffers) {
+  const parts = buffers.map((buffer) => new Uint8Array(buffer));
+  const joined = new Uint8Array(parts.reduce((total, part) => total + part.byteLength, 0));
+  let offset = 0;
+  for (const part of parts) {
+    joined.set(part, offset);
+    offset += part.byteLength;
+  }
+  return joined.buffer;
+}
+
+function createVideoDubbingAbortError() {
+  const error = new Error("Video dubbing TTS request was cancelled");
+  error.name = "AbortError";
+  return error;
+}
+
+function createVideoDubbingTtsLimiter(maxConcurrent) {
+  const limit = Math.max(1, Number(maxConcurrent) || 1);
+  const queue = [];
+  let active = 0;
+
+  const drain = () => {
+    while (active < limit && queue.length) {
+      const entry = queue.shift();
+      if (entry.signal?.aborted) {
+        entry.cleanup();
+        entry.reject(createVideoDubbingAbortError());
+        continue;
+      }
+
+      entry.started = true;
+      entry.cleanup();
+      active += 1;
+      Promise.resolve()
+        .then(entry.task)
+        .then(entry.resolve, entry.reject)
+        .finally(() => {
+          active -= 1;
+          drain();
+        });
+    }
+  };
+
+  return (task, { signal } = {}) => new Promise((resolve, reject) => {
+    const entry = {
+      task,
+      signal,
+      resolve,
+      reject,
+      started: false,
+      cleanup: () => {}
+    };
+    const onAbort = () => {
+      if (entry.started) return;
+      const index = queue.indexOf(entry);
+      if (index >= 0) queue.splice(index, 1);
+      entry.cleanup();
+      reject(createVideoDubbingAbortError());
+      drain();
+    };
+    entry.cleanup = () => signal?.removeEventListener("abort", onAbort);
+
+    if (signal?.aborted) {
+      reject(createVideoDubbingAbortError());
+      return;
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+    queue.push(entry);
+    drain();
+  });
+}
+
+function createVideoDubbingFetchController(externalSignal, timeoutMs) {
+  const controller = new AbortController();
+  let timedOut = false;
+  const onExternalAbort = () => controller.abort();
+  if (externalSignal?.aborted) controller.abort();
+  else externalSignal?.addEventListener("abort", onExternalAbort, { once: true });
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  return {
+    signal: controller.signal,
+    didTimeOut: () => timedOut,
+    cleanup: () => {
+      clearTimeout(timeout);
+      externalSignal?.removeEventListener("abort", onExternalAbort);
+    }
+  };
+}
+
+async function mapVideoDubbingChunks(chunks, worker, concurrency = 3) {
+  const results = new Array(chunks.length);
+  let nextIndex = 0;
+  let stopped = false;
+  async function run() {
+    while (!stopped && nextIndex < chunks.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      try {
+        results[index] = await worker(chunks[index], index);
+      } catch (error) {
+        // In-flight workers cannot be cancelled here, but they must not start
+        // additional Edge chunks after another worker has already failed.
+        stopped = true;
+        throw error;
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, chunks.length) }, () => run()));
+  return results;
+}
+
 function normalizeVideoDubbingLanguageCode(language) {
   return String(languageToCode(language || "Vietnamese") || "en").trim().replace(/_/g, "-");
 }
@@ -1450,74 +1607,130 @@ async function fetchVideoDubbingVoices(language) {
   }
 }
 
-async function fetchEdgeVideoDubbingTts(message) {
-  const text = String(message.text || "").replace(/\s+/g, " ").trim().slice(0, 500);
-  if (!text) throw new Error("Empty dubbing text");
-  const languageCode = normalizeVideoDubbingLanguageCode(message.language || "Vietnamese");
-  const voice = String(message.voice || "").trim().slice(0, 120);
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), VIDEO_DUBBING_TTS_TIMEOUT_MS);
+async function fetchEdgeVideoDubbingTtsChunk({ text, languageCode, voice, signal, onStart }) {
   try {
-    const response = await fetch(`${EDGE_TTS_GATEWAY_BASE}/tts`, {
-      method: "POST",
-      signal: controller.signal,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, locale: languageCode, voice })
-    });
-    if (!response.ok) {
-      let detail = "";
-      try { detail = String((await response.json())?.error || ""); } catch {}
-      throw new Error(detail || `Edge TTS gateway HTTP ${response.status}`);
-    }
-    const buffer = await response.arrayBuffer();
-    if (!buffer.byteLength) throw new Error("Edge TTS returned empty audio");
-    const contentType = response.headers.get("content-type")?.split(";")[0] || "audio/mpeg";
-    let resolvedVoice = voice;
-    const responseVoice = response.headers.get("x-inputbridge-voice");
-    if (responseVoice) {
-      try { resolvedVoice = decodeURIComponent(responseVoice); } catch { resolvedVoice = responseVoice; }
-    }
-    return {
-      audioUrl: `data:${contentType};base64,${arrayBufferToBase64(buffer)}`,
-      languageCode,
-      voice: resolvedVoice,
-      provider: "edge"
-    };
+    return await runWithEdgeVideoDubbingSlot(async () => {
+      onStart?.();
+      const request = createVideoDubbingFetchController(signal, EDGE_VIDEO_DUBBING_TTS_TIMEOUT_MS);
+      try {
+        const response = await fetch(`${EDGE_TTS_GATEWAY_BASE}/tts`, {
+          method: "POST",
+          signal: request.signal,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text, locale: languageCode, voice })
+        });
+        if (!response.ok) {
+          let detail = "";
+          try { detail = String((await response.json())?.error || ""); } catch {}
+          throw new Error(detail || `Edge TTS gateway HTTP ${response.status}`);
+        }
+        const buffer = await response.arrayBuffer();
+        if (!buffer.byteLength) throw new Error("Edge TTS returned empty audio");
+        const contentType = response.headers.get("content-type")?.split(";")[0] || "audio/mpeg";
+        let resolvedVoice = voice;
+        const responseVoice = response.headers.get("x-inputbridge-voice");
+        if (responseVoice) {
+          try { resolvedVoice = decodeURIComponent(responseVoice); } catch { resolvedVoice = responseVoice; }
+        }
+        return { buffer, contentType, resolvedVoice };
+      } catch (error) {
+        if (error?.name === "AbortError") {
+          if (request.didTimeOut()) throw new Error("Edge TTS gateway timed out");
+          throw createVideoDubbingAbortError();
+        }
+        throw error;
+      } finally {
+        request.cleanup();
+      }
+    }, { signal });
   } catch (error) {
-    if (error?.name === "AbortError") throw new Error("Edge TTS gateway timed out");
     throw error;
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
-async function fetchGoogleVideoDubbingTtsLegacy(message) {
-  const text = String(message.text || "").replace(/\s+/g, " ").trim().slice(0, 260);
+async function fetchEdgeVideoDubbingTts(message, { signal, onStart } = {}) {
+  const text = String(message.text || "").replace(/\s+/g, " ").trim();
+  if (!text) throw new Error("Empty dubbing text");
+  if (text.length > 4000) throw new Error("Dubbing text is too long");
+  const languageCode = normalizeVideoDubbingLanguageCode(message.language || "Vietnamese");
+  const voice = String(message.voice || "").trim().slice(0, 120);
+  const textChunks = splitVideoDubbingText(text);
+  let started = false;
+  const markStarted = () => {
+    if (started) return;
+    started = true;
+    onStart?.();
+  };
+  const audioChunks = await mapVideoDubbingChunks(
+    textChunks,
+    (chunk) => fetchEdgeVideoDubbingTtsChunk({ text: chunk, languageCode, voice, signal, onStart: markStarted }),
+    2
+  );
+  const buffer = joinVideoDubbingAudioBuffers(audioChunks.map((chunk) => chunk.buffer));
+  const contentType = audioChunks[0]?.contentType || "audio/mpeg";
+  return {
+    audioUrl: `data:${contentType};base64,${arrayBufferToBase64(buffer)}`,
+    languageCode,
+    voice: audioChunks[0]?.resolvedVoice || voice,
+    provider: "edge"
+  };
+}
+
+async function fetchGoogleVideoDubbingTtsChunk({ text, languageCode, signal }) {
+  try {
+    return await runWithGoogleVideoDubbingSlot(async () => {
+      const request = createVideoDubbingFetchController(signal, GOOGLE_VIDEO_DUBBING_TTS_TIMEOUT_MS);
+      try {
+        const params = new URLSearchParams({
+          ie: "UTF-8",
+          client: "tw-ob",
+          tl: languageCode,
+          q: text
+        });
+        const response = await fetch(`https://translate.google.com/translate_tts?${params}`, {
+          signal: request.signal,
+          headers: { Accept: "audio/mpeg,audio/*;q=0.9,*/*;q=0.8" }
+        });
+        if (!response.ok) throw new Error(`Google TTS HTTP ${response.status}`);
+
+        const buffer = await response.arrayBuffer();
+        if (!buffer.byteLength) throw new Error("Google TTS returned empty audio");
+        const contentType = response.headers.get("content-type")?.split(";")[0] || "audio/mpeg";
+        return { buffer, contentType };
+      } catch (error) {
+        if (error?.name === "AbortError") {
+          if (request.didTimeOut()) throw new Error("Google TTS timed out");
+          throw createVideoDubbingAbortError();
+        }
+        throw error;
+      } finally {
+        request.cleanup();
+      }
+    }, { signal });
+  } catch (error) {
+    throw error;
+  }
+}
+
+async function fetchGoogleVideoDubbingTtsLegacy(message, { signal } = {}) {
+  const text = String(message.text || "").replace(/\s+/g, " ").trim();
   if (!text) return { ok: false, error: "Empty dubbing text" };
+  if (text.length > 4000) return { ok: false, error: "Dubbing text is too long" };
 
   const languageCode = languageToCode(message.language || "Vietnamese");
-  const cacheKey = `${languageCode}\u0000${text}`;
+  const cacheKey = `google\u0000${languageCode}\u0000${text}`;
   const cached = VIDEO_DUBBING_TTS_CACHE.get(cacheKey);
   if (cached) return { ok: true, data: cached };
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), VIDEO_DUBBING_TTS_TIMEOUT_MS);
   try {
-    const params = new URLSearchParams({
-      ie: "UTF-8",
-      client: "tw-ob",
-      tl: languageCode,
-      q: text
-    });
-    const response = await fetch(`https://translate.google.com/translate_tts?${params}`, {
-      signal: controller.signal,
-      headers: { Accept: "audio/mpeg,audio/*;q=0.9,*/*;q=0.8" }
-    });
-    if (!response.ok) throw new Error(`Google TTS HTTP ${response.status}`);
-
-    const buffer = await response.arrayBuffer();
-    if (!buffer.byteLength) throw new Error("Google TTS returned empty audio");
-    const contentType = response.headers.get("content-type")?.split(";")[0] || "audio/mpeg";
+    const textChunks = splitVideoDubbingText(text);
+    const audioChunks = await mapVideoDubbingChunks(
+      textChunks,
+      (chunk) => fetchGoogleVideoDubbingTtsChunk({ text: chunk, languageCode, signal }),
+      3
+    );
+    const buffer = joinVideoDubbingAudioBuffers(audioChunks.map((chunk) => chunk.buffer));
+    const contentType = audioChunks[0]?.contentType || "audio/mpeg";
     const data = {
       audioUrl: `data:${contentType};base64,${arrayBufferToBase64(buffer)}`,
       languageCode,
@@ -1526,44 +1739,127 @@ async function fetchGoogleVideoDubbingTtsLegacy(message) {
     rememberVideoDubbingTts(cacheKey, data);
     return { ok: true, data };
   } catch (error) {
-    const messageText = error?.name === "AbortError"
-      ? "Google TTS timed out"
-      : error?.message || String(error);
-    return { ok: false, error: messageText };
-  } finally {
-    clearTimeout(timeout);
+    return { ok: false, error: error?.message || String(error) };
   }
 }
 
+function settleVideoDubbingProvider(provider, promise) {
+  return Promise.resolve(promise).then(
+    (data) => ({ ok: true, provider, data }),
+    (error) => ({ ok: false, provider, error: error?.message || String(error) })
+  );
+}
+
+async function fetchGoogleVideoDubbingTtsData(message, { signal } = {}) {
+  const response = await fetchGoogleVideoDubbingTtsLegacy(message, { signal });
+  if (!response?.ok || !response.data) throw new Error(response?.error || "Google TTS failed");
+  return response.data;
+}
+
+function asGoogleVideoDubbingFallback(data, edgeError) {
+  return {
+    ...data,
+    fallbackFrom: "edge",
+    fallbackError: edgeError || `Edge TTS exceeded ${VIDEO_DUBBING_TTS_HEDGE_DELAY_MS}ms`
+  };
+}
+
 async function fetchVideoDubbingTts(message) {
-  const text = String(message.text || "").replace(/\s+/g, " ").trim().slice(0, 500);
+  const text = String(message.text || "").replace(/\s+/g, " ").trim();
   if (!text) return { ok: false, error: "Empty dubbing text" };
+  if (text.length > 4000) return { ok: false, error: "Dubbing text is too long" };
   const languageCode = normalizeVideoDubbingLanguageCode(message.language || "Vietnamese");
   const voice = String(message.voice || "").trim().slice(0, 120);
+  const providerPolicy = message.providerPolicy === "google" ? "google" : "edge-with-fallback";
+
+  if (providerPolicy === "google") {
+    return fetchGoogleVideoDubbingTtsLegacy({ ...message, text, language: languageCode });
+  }
+
   const cacheKey = `edge\u0000${languageCode}\u0000${voice}\u0000${text}`;
   const cached = VIDEO_DUBBING_TTS_CACHE.get(cacheKey);
   if (cached) return { ok: true, data: cached };
-
-  let edgeError = "";
-  try {
-    const data = await fetchEdgeVideoDubbingTts({ ...message, text, language: languageCode, voice });
-    rememberVideoDubbingTts(cacheKey, data);
-    return { ok: true, data };
-  } catch (error) {
-    edgeError = error?.message || String(error);
-  }
-
-  const fallback = await fetchGoogleVideoDubbingTtsLegacy({ ...message, text, language: languageCode });
-  if (fallback?.ok && fallback.data) {
-    fallback.data.fallbackFrom = "edge";
-    fallback.data.fallbackError = edgeError;
-    rememberVideoDubbingTts(cacheKey, fallback.data);
+  const cacheGoogleFallback = (data, edgeError = "") => {
+    const fallback = asGoogleVideoDubbingFallback(data, edgeError);
+    rememberVideoDubbingTts(cacheKey, fallback);
     return fallback;
-  }
-  return {
-    ok: false,
-    error: `${edgeError || "Edge TTS failed"}; ${fallback?.error || "Google TTS failed"}`
   };
+
+  const edgeController = new AbortController();
+  const googleController = new AbortController();
+  const overallTimeout = setTimeout(() => {
+    edgeController.abort();
+    googleController.abort();
+  }, VIDEO_DUBBING_TTS_OVERALL_TIMEOUT_MS);
+  try {
+  let resolveEdgeStarted;
+  const edgeStarted = new Promise((resolve) => { resolveEdgeStarted = resolve; });
+  const edgeTask = settleVideoDubbingProvider("edge", (async () => {
+    const data = await fetchEdgeVideoDubbingTts(
+      { ...message, text, language: languageCode, voice },
+      { signal: edgeController.signal, onStart: resolveEdgeStarted }
+    );
+    rememberVideoDubbingTts(cacheKey, data);
+    return data;
+  })());
+
+  let hedgeTimeout = 0;
+  const hedgeSignal = edgeStarted.then(() => new Promise((resolve) => {
+    hedgeTimeout = setTimeout(() => resolve({ hedge: true }), VIDEO_DUBBING_TTS_HEDGE_DELAY_MS);
+  }));
+  const initial = await Promise.race([edgeTask, hedgeSignal]);
+  clearTimeout(hedgeTimeout);
+
+  if (!initial?.hedge && initial.ok) {
+    googleController.abort();
+    return { ok: true, data: initial.data };
+  }
+
+  const earlyEdgeError = initial?.hedge ? "" : initial?.error || "Edge TTS failed";
+  const googleTask = settleVideoDubbingProvider(
+    "google",
+    fetchGoogleVideoDubbingTtsData(
+      { ...message, text, language: languageCode },
+      { signal: googleController.signal }
+    )
+  );
+
+  if (!initial?.hedge) {
+    const google = await googleTask;
+    if (google.ok) return { ok: true, data: cacheGoogleFallback(google.data, earlyEdgeError) };
+    return { ok: false, error: `${earlyEdgeError}; ${google.error || "Google TTS failed"}` };
+  }
+
+  const first = await Promise.race([edgeTask, googleTask]);
+  if (first.ok) {
+    if (first.provider === "edge") {
+      googleController.abort();
+      return { ok: true, data: first.data };
+    }
+    edgeController.abort();
+    return { ok: true, data: cacheGoogleFallback(first.data) };
+  }
+
+  const second = await (first.provider === "edge" ? googleTask : edgeTask);
+  if (second.ok) {
+    if (second.provider === "edge") {
+      googleController.abort();
+      return { ok: true, data: second.data };
+    }
+    edgeController.abort();
+    return { ok: true, data: cacheGoogleFallback(second.data, first.error) };
+  }
+
+  edgeController.abort();
+  googleController.abort();
+  const edgeError = first.provider === "edge" ? first.error : second.error;
+  const googleError = first.provider === "google" ? first.error : second.error;
+  return { ok: false, error: `${edgeError || "Edge TTS failed"}; ${googleError || "Google TTS failed"}` };
+  } finally {
+    clearTimeout(overallTimeout);
+    edgeController.abort();
+    googleController.abort();
+  }
 }
 
 function languageToCode(language) {

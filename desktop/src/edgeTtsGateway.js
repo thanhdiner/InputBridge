@@ -11,11 +11,14 @@ const VOICE_LIST_URL = `https://speech.platform.bing.com/consumer/speech/synthes
 const SYNTHESIS_URL = "wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1";
 const MAX_BODY_BYTES = 32 * 1024;
 const MAX_TEXT_CHARS = 1200;
-const REQUEST_TIMEOUT_MS = 12000;
+const REQUEST_TIMEOUT_MS = 8000;
+const VOICE_REQUEST_TIMEOUT_MS = 8000;
+const TRANSIENT_CLOSE_RETRY_LIMIT = 1;
 const VOICE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
 let voiceCache = null;
 let voiceCacheAt = 0;
+let voiceRequest = null;
 
 function json(res, statusCode, payload, origin = "") {
   const body = JSON.stringify(payload);
@@ -60,17 +63,36 @@ function normalizeVoice(raw) {
 
 async function getVoices({ force = false } = {}) {
   if (!force && voiceCache && Date.now() - voiceCacheAt < VOICE_CACHE_TTL_MS) return voiceCache;
-  const response = await fetch(VOICE_LIST_URL, {
-    headers: {
-      accept: "application/json",
-      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0"
+  if (voiceRequest) return voiceRequest;
+  const request = (async () => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), VOICE_REQUEST_TIMEOUT_MS);
+    try {
+      const response = await fetch(VOICE_LIST_URL, {
+        signal: controller.signal,
+        headers: {
+          accept: "application/json",
+          "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0"
+        }
+      });
+      if (!response.ok) throw new Error(`Edge voice list HTTP ${response.status}`);
+      const data = await response.json();
+      voiceCache = Array.isArray(data) ? data.map(normalizeVoice).filter(Boolean) : [];
+      voiceCacheAt = Date.now();
+      return voiceCache;
+    } catch (error) {
+      if (error?.name === "AbortError") throw new Error("Edge voice list timed out");
+      throw error;
+    } finally {
+      clearTimeout(timeout);
     }
-  });
-  if (!response.ok) throw new Error(`Edge voice list HTTP ${response.status}`);
-  const data = await response.json();
-  voiceCache = Array.isArray(data) ? data.map(normalizeVoice).filter(Boolean) : [];
-  voiceCacheAt = Date.now();
-  return voiceCache;
+  })();
+  voiceRequest = request;
+  try {
+    return await request;
+  } finally {
+    if (voiceRequest === request) voiceRequest = null;
+  }
 }
 
 function voicesForLocale(voices, locale) {
@@ -180,68 +202,107 @@ function parseAudioFrame(data) {
   return buffer.subarray(payloadStart);
 }
 
-async function synthesizeEdgeTts({ text, locale, voice, rate = 0, pitch = 0, volume = 0 }) {
-  const cleanText = String(text || "").replace(/\s+/g, " ").trim().slice(0, MAX_TEXT_CHARS);
+function createEdgeTtsAbortError() {
+  const error = new Error("Edge TTS request was cancelled");
+  error.name = "AbortError";
+  return error;
+}
+
+async function synthesizeEdgeTts({ text, locale, voice, rate = 0, pitch = 0, volume = 0 }, { signal } = {}) {
+  const cleanText = String(text || "").replace(/\s+/g, " ").trim();
   if (!cleanText) throw new Error("Empty Edge TTS text");
+  if (cleanText.length > MAX_TEXT_CHARS) throw new Error(`Edge TTS text exceeds ${MAX_TEXT_CHARS} characters`);
+  if (signal?.aborted) throw createEdgeTtsAbortError();
 
   const normalizedLocale = normalizeLocale(locale);
   const voices = await getVoices();
+  if (signal?.aborted) throw createEdgeTtsAbortError();
   const selectedVoice = selectVoice(voices, normalizedLocale, voice);
-  const connectionId = requestId();
-  const params = new URLSearchParams({
-    TrustedClientToken: TRUSTED_CLIENT_TOKEN,
-    "Sec-MS-GEC": makeSecMsGec(),
-    "Sec-MS-GEC-Version": EDGE_VERSION,
-    ConnectionId: connectionId
-  });
-  const url = `${SYNTHESIS_URL}?${params}`;
-  const timestamp = edgeTimestamp();
+  const deadline = Date.now() + REQUEST_TIMEOUT_MS;
+  let audio = null;
+  for (let attempt = 0; attempt <= TRANSIENT_CLOSE_RETRY_LIMIT; attempt += 1) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) throw new Error("Edge TTS timed out");
+    const connectionId = requestId();
+    const params = new URLSearchParams({
+      TrustedClientToken: TRUSTED_CLIENT_TOKEN,
+      "Sec-MS-GEC": makeSecMsGec(),
+      "Sec-MS-GEC-Version": EDGE_VERSION,
+      ConnectionId: connectionId
+    });
+    const url = `${SYNTHESIS_URL}?${params}`;
+    const timestamp = edgeTimestamp();
 
-  const audio = await new Promise((resolve, reject) => {
-    const chunks = [];
-    let settled = false;
-    const finish = (error, value) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      try { socket.close(); } catch {}
-      if (error) reject(error);
-      else resolve(value);
-    };
-    const timeout = setTimeout(() => finish(new Error("Edge TTS timed out")), REQUEST_TIMEOUT_MS);
-    const socket = new WebSocket(url, {
-      headers: {
-        Origin: EDGE_EXTENSION_ORIGIN,
-        Pragma: "no-cache",
-        "Cache-Control": "no-cache",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0"
-      },
-      handshakeTimeout: 8000
-    });
-    socket.binaryType = "arraybuffer";
-    socket.on("open", () => {
-      socket.send(buildSpeechConfig(timestamp));
-      socket.send(buildSsmlMessage({ text: cleanText, voice: selectedVoice.name, locale: selectedVoice.locale, rate, pitch, volume }, timestamp));
-    });
-    socket.on("message", (data, isBinary) => {
-      if (isBinary) {
-        const chunk = parseAudioFrame(data);
-        if (chunk?.length) chunks.push(chunk);
-        return;
-      }
-      if (parsePath(data.toString()) === "turn.end") {
-        if (!chunks.length) finish(new Error("Edge TTS returned no audio"));
-        else finish(null, Buffer.concat(chunks));
-      }
-    });
-    socket.on("unexpected-response", (_request, response) => {
-      finish(new Error(`Edge TTS WebSocket HTTP ${response.statusCode || 0}`));
-    });
-    socket.on("error", (error) => finish(error));
-    socket.on("close", (code, reason) => {
-      if (!settled && code !== 1000) finish(new Error(`Edge TTS socket closed ${code}: ${String(reason || "")}`));
-    });
-  });
+    try {
+      audio = await new Promise((resolve, reject) => {
+        const chunks = [];
+        let settled = false;
+        let socket = null;
+        let timeout = 0;
+        const onAbort = () => finish(createEdgeTtsAbortError());
+        const finish = (error, value) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          signal?.removeEventListener("abort", onAbort);
+          try {
+            if (error) socket?.terminate();
+            else socket?.close();
+          } catch {}
+          if (error) reject(error);
+          else resolve(value);
+        };
+        if (signal?.aborted) {
+          finish(createEdgeTtsAbortError());
+          return;
+        }
+        signal?.addEventListener("abort", onAbort, { once: true });
+        timeout = setTimeout(() => finish(new Error("Edge TTS timed out")), remainingMs);
+        socket = new WebSocket(url, {
+          headers: {
+            Origin: EDGE_EXTENSION_ORIGIN,
+            Pragma: "no-cache",
+            "Cache-Control": "no-cache",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0"
+          },
+          handshakeTimeout: Math.min(8000, remainingMs)
+        });
+        socket.binaryType = "arraybuffer";
+        socket.on("open", () => {
+          socket.send(buildSpeechConfig(timestamp));
+          socket.send(buildSsmlMessage({ text: cleanText, voice: selectedVoice.name, locale: selectedVoice.locale, rate, pitch, volume }, timestamp));
+        });
+        socket.on("message", (data, isBinary) => {
+          if (isBinary) {
+            const chunk = parseAudioFrame(data);
+            if (chunk?.length) chunks.push(chunk);
+            return;
+          }
+          if (parsePath(data.toString()) === "turn.end") {
+            if (!chunks.length) finish(new Error("Edge TTS returned no audio"));
+            else finish(null, Buffer.concat(chunks));
+          }
+        });
+        socket.on("unexpected-response", (_request, response) => {
+          finish(new Error(`Edge TTS WebSocket HTTP ${response.statusCode || 0}`));
+        });
+        socket.on("error", (error) => finish(error));
+        socket.on("close", (code, reason) => {
+          if (settled) return;
+          const error = new Error(`Edge TTS socket closed ${code} before turn.end: ${String(reason || "")}`);
+          error.edgeSocketCloseCode = Number(code);
+          finish(error);
+        });
+      });
+      break;
+    } catch (error) {
+      const canRetry = error?.edgeSocketCloseCode === 1006
+        && attempt < TRANSIENT_CLOSE_RETRY_LIMIT
+        && !signal?.aborted
+        && deadline - Date.now() >= 500;
+      if (!canRetry) throw error;
+    }
+  }
 
   return {
     audio,
@@ -295,22 +356,36 @@ function startEdgeTtsGateway({ port = EDGE_TTS_PORT } = {}) {
         return;
       }
       if (req.method === "POST" && url.pathname === "/tts") {
-        const payload = await readJsonBody(req);
-        const result = await synthesizeEdgeTts(payload || {});
-        res.writeHead(200, {
-          "content-type": "audio/mpeg",
-          "content-length": result.audio.length,
-          "cache-control": "no-store",
-          "x-inputbridge-voice": encodeURIComponent(result.voice.name),
-          "x-inputbridge-locale": result.voice.locale,
-          ...corsHeaders(origin)
-        });
-        res.end(result.audio);
+        const clientController = new AbortController();
+        const abortForDisconnect = () => {
+          if (!res.writableEnded) clientController.abort();
+        };
+        req.once("aborted", abortForDisconnect);
+        res.once("close", abortForDisconnect);
+        try {
+          const payload = await readJsonBody(req);
+          const result = await synthesizeEdgeTts(payload || {}, { signal: clientController.signal });
+          if (clientController.signal.aborted || res.destroyed) return;
+          res.writeHead(200, {
+            "content-type": "audio/mpeg",
+            "content-length": result.audio.length,
+            "cache-control": "no-store",
+            "x-inputbridge-voice": encodeURIComponent(result.voice.name),
+            "x-inputbridge-locale": result.voice.locale,
+            ...corsHeaders(origin)
+          });
+          res.end(result.audio);
+        } finally {
+          req.removeListener("aborted", abortForDisconnect);
+          res.removeListener("close", abortForDisconnect);
+        }
         return;
       }
       json(res, 404, { ok: false, error: "Not found" }, origin);
     } catch (error) {
-      json(res, 502, { ok: false, error: error?.message || String(error) }, origin);
+      if (!res.destroyed && !res.writableEnded && !res.headersSent) {
+        json(res, 502, { ok: false, error: error?.message || String(error) }, origin);
+      }
     }
   });
 
