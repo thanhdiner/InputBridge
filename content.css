@@ -1953,7 +1953,7 @@
 }
 
 .ib-youtube-dubbing-button-icon {
-  display: inline-flex !important;
+  display: none !important; /* Hide on desktop when text label is visible */
   width: 19px !important;
   height: 19px !important;
   align-items: center !important;
@@ -1970,19 +1970,45 @@
   height: 19px !important;
 }
 
+/* Base paths (idle state) */
 .html5-video-player .ib-youtube-dubbing-button-icon svg path,
 .ytp-chrome-controls .ib-youtube-dubbing-button-icon svg path,
 .ib-youtube-dubbing-button-icon svg path {
   display: block !important;
   visibility: visible !important;
   opacity: 1 !important;
-  fill: currentColor !important;
-  stroke: currentColor !important;
+  fill: rgba(255, 255, 255, 0.9) !important;
+  stroke: rgba(255, 255, 255, 0.9) !important;
   stroke-width: 1.7 !important;
   stroke-linecap: round !important;
   stroke-linejoin: round !important;
 }
 
+/* Hover state paths */
+.html5-video-player .ib-youtube-dubbing-button:hover .ib-youtube-dubbing-button-icon svg path,
+.ytp-chrome-controls .ib-youtube-dubbing-button:hover .ib-youtube-dubbing-button-icon svg path,
+.ib-youtube-dubbing-button:hover .ib-youtube-dubbing-button-icon svg path {
+  fill: #ffffff !important;
+  stroke: #ffffff !important;
+}
+
+/* Active / Ready state paths */
+.html5-video-player .ib-youtube-dubbing-button.is-active .ib-youtube-dubbing-button-icon svg path,
+.ytp-chrome-controls .ib-youtube-dubbing-button.is-active .ib-youtube-dubbing-button-icon svg path,
+.ib-youtube-dubbing-button.is-active .ib-youtube-dubbing-button-icon svg path {
+  fill: #73d6ff !important;
+  stroke: #73d6ff !important;
+}
+
+/* Error state paths */
+.html5-video-player .ib-youtube-dubbing-button.is-error .ib-youtube-dubbing-button-icon svg path,
+.ytp-chrome-controls .ib-youtube-dubbing-button.is-error .ib-youtube-dubbing-button-icon svg path,
+.ib-youtube-dubbing-button.is-error .ib-youtube-dubbing-button-icon svg path {
+  fill: #ffb0aa !important;
+  stroke: #ffb0aa !important;
+}
+
+/* Second path (waves) must always have fill: none */
 .html5-video-player .ib-youtube-dubbing-button-icon svg path:nth-child(2),
 .ytp-chrome-controls .ib-youtube-dubbing-button-icon svg path:nth-child(2),
 .ib-youtube-dubbing-button-icon svg path:nth-child(2) {
@@ -2942,6 +2968,10 @@
   .ib-youtube-dubbing-button.ytp-button {
     min-width: 40px !important;
     padding: 0 !important;
+  }
+
+  .ib-youtube-dubbing-button-icon {
+    display: inline-flex !important; /* Show on mobile/tablet when label is hidden */
   }
 
   .ib-youtube-dubbing-button.ytp-button::before {
