@@ -3,6 +3,10 @@ const loadingText = document.getElementById("loadingText");
 const preview = document.getElementById("preview");
 const layoutBlock = document.getElementById("layoutBlock");
 const layoutCanvas = document.getElementById("layoutCanvas");
+const drawingCanvas = document.getElementById("drawingCanvas");
+const canvasStage = document.getElementById("canvasStage");
+const textLayer = document.getElementById("textLayer");
+const interactionHint = document.getElementById("interactionHint");
 const canvasWrap = document.getElementById("canvasWrap");
 const originalBlock = document.getElementById("originalBlock");
 const originalText = document.getElementById("originalText");
@@ -19,7 +23,13 @@ const openMainButton = document.getElementById("openMainButton");
 const zoomOutButton = document.getElementById("zoomOutButton");
 const zoomResetButton = document.getElementById("zoomResetButton");
 const zoomInButton = document.getElementById("zoomInButton");
+const selectTextButton = document.getElementById("selectTextButton");
+const drawButton = document.getElementById("drawButton");
+const eraseButton = document.getElementById("eraseButton");
+const clearDrawingButton = document.getElementById("clearDrawingButton");
 const resultTitle = document.getElementById("resultTitle");
+const selectionToolbar = document.getElementById("selectionToolbar");
+const copySelectionButton = document.getElementById("copySelectionButton");
 
 let current = null;
 let drawVersion = 0;
@@ -27,6 +37,14 @@ let canvasReady = false;
 let zoom = 1;
 let isPanning = false;
 let panStart = null;
+let interactionMode = "select";
+let isDrawing = false;
+let lastDrawPoint = null;
+let layoutImageWidth = 1;
+let layoutImageHeight = 1;
+let drawingHasContent = false;
+let selectedLayoutText = "";
+let selectionUpdateFrame = 0;
 
 init().catch((error) => render({ status: "error", error: error?.message || String(error) }));
 
@@ -46,14 +64,30 @@ async function init() {
   zoomOutButton.addEventListener("click", () => setZoom(zoom - 0.25));
   zoomInButton.addEventListener("click", () => setZoom(zoom + 0.25));
   zoomResetButton.addEventListener("click", () => setZoom(1));
+  selectTextButton.addEventListener("click", () => setInteractionMode("select"));
+  drawButton.addEventListener("click", () => setInteractionMode("draw"));
+  eraseButton.addEventListener("click", () => setInteractionMode("erase"));
+  clearDrawingButton.addEventListener("click", clearDrawing);
+  copySelectionButton.addEventListener("pointerdown", (event) => event.preventDefault());
+  copySelectionButton.addEventListener("click", copySelectedLayoutText);
+  drawingCanvas.addEventListener("pointerdown", onDrawStart);
+  drawingCanvas.addEventListener("pointermove", onDrawMove);
+  drawingCanvas.addEventListener("pointerup", onDrawEnd);
+  drawingCanvas.addEventListener("pointercancel", onDrawEnd);
   canvasWrap.addEventListener("wheel", onCanvasWheel, { passive: false });
   canvasWrap.addEventListener("pointerdown", onPanStart);
   canvasWrap.addEventListener("pointermove", onPanMove);
   canvasWrap.addEventListener("pointerup", onPanEnd);
   canvasWrap.addEventListener("pointercancel", onPanEnd);
   layoutCanvas.addEventListener("dblclick", () => setZoom(1));
+  document.addEventListener("selectionchange", scheduleSelectionToolbarUpdate);
+  document.addEventListener("keydown", onSelectionShortcut);
+  canvasWrap.addEventListener("scroll", scheduleSelectionToolbarUpdate, { passive: true });
+  window.addEventListener("blur", hideSelectionToolbar);
   window.addEventListener("resize", () => {
-    if (current?.mode === "layout") canvasWrap.scrollTop = 0;
+    if (current?.mode !== "layout") return;
+    syncSelectableTextScale();
+    scheduleSelectionToolbarUpdate();
   });
 }
 
@@ -92,19 +126,30 @@ async function drawLayoutResult(data) {
   const image = await loadImage(data.layoutImageDataUrl);
   if (version !== drawVersion) return;
 
+  layoutImageWidth = image.naturalWidth;
+  layoutImageHeight = image.naturalHeight;
   layoutCanvas.width = image.naturalWidth;
   layoutCanvas.height = image.naturalHeight;
+  drawingCanvas.width = image.naturalWidth;
+  drawingCanvas.height = image.naturalHeight;
+  canvasStage.style.aspectRatio = `${image.naturalWidth} / ${image.naturalHeight}`;
+  drawingHasContent = false;
+  clearDrawingButton.disabled = true;
   setZoom(zoom, false);
   const context2d = layoutCanvas.getContext("2d", { alpha: false });
   context2d.imageSmoothingEnabled = true;
   context2d.imageSmoothingQuality = "high";
   context2d.drawImage(image, 0, 0);
 
+  const renderedBlocks = [];
   if (data.status === "done") {
     for (const block of Array.isArray(data.layoutBlocks) ? data.layoutBlocks : []) {
-      drawTranslatedBlock(context2d, block, image.naturalWidth, image.naturalHeight);
+      const rendered = drawTranslatedBlock(context2d, block, image.naturalWidth, image.naturalHeight);
+      if (rendered) renderedBlocks.push(rendered);
     }
   }
+  renderSelectableText(renderedBlocks, image.naturalWidth, image.naturalHeight);
+  requestAnimationFrame(syncSelectableTextScale);
 
   canvasReady = data.status === "done";
   copyImageButton.disabled = !canvasReady;
@@ -151,6 +196,16 @@ function drawTranslatedBlock(context2d, block, imageWidth, imageHeight) {
     cursorY += fit.lineHeight;
   }
   context2d.restore();
+
+  return {
+    text: visibleLines.join("\n"),
+    x: x + innerPad,
+    y: y + innerPad + Math.max(0, (textHeight - totalHeight) / 2),
+    width: textWidth,
+    height: Math.min(textHeight, totalHeight),
+    fontSize: fit.fontSize,
+    lineHeight: fit.lineHeight
+  };
 }
 
 function fitText(context2d, text, maxWidth, maxHeight, originalHeight) {
@@ -236,6 +291,195 @@ function loadImage(source) {
   });
 }
 
+function renderSelectableText(blocks, imageWidth, imageHeight) {
+  hideSelectionToolbar();
+  textLayer.replaceChildren();
+  for (const block of Array.isArray(blocks) ? blocks : []) {
+    const text = String(block?.text || "").trim();
+    if (!text) continue;
+    const item = document.createElement("span");
+    item.className = "selectable-text";
+    item.textContent = text;
+    item.dataset.fontSize = String(block.fontSize || 12);
+    item.dataset.lineHeight = String(block.lineHeight || 14);
+    item.style.left = `${clamp(Number(block.x || 0) / imageWidth * 100, 0, 100)}%`;
+    item.style.top = `${clamp(Number(block.y || 0) / imageHeight * 100, 0, 100)}%`;
+    item.style.width = `${clamp(Number(block.width || 1) / imageWidth * 100, 0.1, 100)}%`;
+    item.style.height = `${clamp(Number(block.height || 1) / imageHeight * 100, 0.1, 100)}%`;
+    textLayer.appendChild(item);
+  }
+}
+
+function syncSelectableTextScale() {
+  const stageWidth = canvasStage.getBoundingClientRect().width;
+  if (!stageWidth || !layoutImageWidth) return;
+  const scale = stageWidth / layoutImageWidth;
+  for (const item of textLayer.querySelectorAll(".selectable-text")) {
+    item.style.fontSize = `${Number(item.dataset.fontSize || 12) * scale}px`;
+    item.style.lineHeight = `${Number(item.dataset.lineHeight || 14) * scale}px`;
+  }
+}
+
+function setInteractionMode(mode) {
+  interactionMode = mode;
+  if (mode !== "select") {
+    window.getSelection()?.removeAllRanges();
+    hideSelectionToolbar();
+  }
+  canvasWrap.classList.toggle("mode-select", mode === "select");
+  canvasWrap.classList.toggle("mode-draw", mode === "draw");
+  canvasWrap.classList.toggle("mode-erase", mode === "erase");
+  selectTextButton.classList.toggle("active", mode === "select");
+  drawButton.classList.toggle("active", mode === "draw");
+  eraseButton.classList.toggle("active", mode === "erase");
+  selectTextButton.setAttribute("aria-selected", String(mode === "select"));
+  drawButton.setAttribute("aria-selected", String(mode === "draw"));
+  eraseButton.setAttribute("aria-selected", String(mode === "erase"));
+  interactionHint.textContent = mode === "select"
+    ? "Bôi đen chữ để hiện nút sao chép · Ctrl + lăn để phóng to"
+    : mode === "draw"
+      ? "Kéo chuột để vẽ lên ảnh"
+      : "Kéo qua nét vẽ để tẩy";
+}
+
+function scheduleSelectionToolbarUpdate() {
+  cancelAnimationFrame(selectionUpdateFrame);
+  selectionUpdateFrame = requestAnimationFrame(updateSelectionToolbar);
+}
+
+function updateSelectionToolbar() {
+  selectionUpdateFrame = 0;
+  if (interactionMode !== "select" || layoutBlock.hidden) {
+    hideSelectionToolbar();
+    return;
+  }
+
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || !selection.rangeCount) {
+    hideSelectionToolbar();
+    return;
+  }
+
+  const range = selection.getRangeAt(0);
+  const startElement = range.startContainer.nodeType === Node.ELEMENT_NODE
+    ? range.startContainer
+    : range.startContainer.parentElement;
+  const endElement = range.endContainer.nodeType === Node.ELEMENT_NODE
+    ? range.endContainer
+    : range.endContainer.parentElement;
+  if (!startElement || !endElement || !textLayer.contains(startElement) || !textLayer.contains(endElement)) {
+    hideSelectionToolbar();
+    return;
+  }
+
+  const text = selection.toString().trim();
+  const rect = range.getBoundingClientRect();
+  if (!text || (!rect.width && !rect.height)) {
+    hideSelectionToolbar();
+    return;
+  }
+
+  selectedLayoutText = text;
+  selectionToolbar.hidden = false;
+  selectionToolbar.classList.remove("is-copied");
+  copySelectionButton.querySelector("strong").textContent = "Sao chép";
+
+  const toolbarRect = selectionToolbar.getBoundingClientRect();
+  const margin = 10;
+  let left = rect.left + rect.width / 2 - toolbarRect.width / 2;
+  let top = rect.top - toolbarRect.height - 8;
+  if (top < margin) top = rect.bottom + 8;
+  left = clamp(left, margin, Math.max(margin, window.innerWidth - toolbarRect.width - margin));
+  top = clamp(top, margin, Math.max(margin, window.innerHeight - toolbarRect.height - margin));
+  selectionToolbar.style.left = `${Math.round(left)}px`;
+  selectionToolbar.style.top = `${Math.round(top)}px`;
+}
+
+function hideSelectionToolbar() {
+  selectedLayoutText = "";
+  selectionToolbar.hidden = true;
+  selectionToolbar.classList.remove("is-copied");
+}
+
+async function copySelectedLayoutText() {
+  const text = selectedLayoutText || getSelectedLayoutText();
+  if (!text) return;
+  await window.inputBridge.copyResult(text);
+  selectionToolbar.classList.add("is-copied");
+  copySelectionButton.querySelector("strong").textContent = "Đã sao chép";
+}
+
+function getSelectedLayoutText() {
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || !selection.rangeCount) return "";
+  const range = selection.getRangeAt(0);
+  const container = range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
+    ? range.commonAncestorContainer
+    : range.commonAncestorContainer.parentElement;
+  return container && textLayer.contains(container) ? selection.toString().trim() : "";
+}
+
+function onSelectionShortcut(event) {
+  if (!(event.ctrlKey || event.metaKey) || event.altKey || event.key.toLowerCase() !== "c") return;
+  const text = getSelectedLayoutText();
+  if (!text) return;
+  event.preventDefault();
+  selectedLayoutText = text;
+  void copySelectedLayoutText();
+}
+
+function clearDrawing() {
+  if (!drawingHasContent) return;
+  drawingCanvas.getContext("2d").clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+  drawingHasContent = false;
+  clearDrawingButton.disabled = true;
+  flashButton(clearDrawingButton, "Đã xóa");
+}
+
+function drawPointFromEvent(event) {
+  const rect = drawingCanvas.getBoundingClientRect();
+  return {
+    x: (event.clientX - rect.left) * drawingCanvas.width / rect.width,
+    y: (event.clientY - rect.top) * drawingCanvas.height / rect.height
+  };
+}
+
+function onDrawStart(event) {
+  if (interactionMode !== "draw" && interactionMode !== "erase") return;
+  isDrawing = true;
+  lastDrawPoint = drawPointFromEvent(event);
+  drawingCanvas.setPointerCapture(event.pointerId);
+  event.preventDefault();
+}
+
+function onDrawMove(event) {
+  if (!isDrawing || !lastDrawPoint) return;
+  const point = drawPointFromEvent(event);
+  const context2d = drawingCanvas.getContext("2d");
+  context2d.save();
+  context2d.lineCap = "round";
+  context2d.lineJoin = "round";
+  context2d.lineWidth = interactionMode === "erase" ? 22 : 4;
+  context2d.globalCompositeOperation = interactionMode === "erase" ? "destination-out" : "source-over";
+  context2d.strokeStyle = "#ef4444";
+  context2d.beginPath();
+  context2d.moveTo(lastDrawPoint.x, lastDrawPoint.y);
+  context2d.lineTo(point.x, point.y);
+  context2d.stroke();
+  context2d.restore();
+  drawingHasContent = true;
+  clearDrawingButton.disabled = false;
+  lastDrawPoint = point;
+  event.preventDefault();
+}
+
+function onDrawEnd(event) {
+  if (!isDrawing) return;
+  isDrawing = false;
+  lastDrawPoint = null;
+  if (drawingCanvas.hasPointerCapture(event.pointerId)) drawingCanvas.releasePointerCapture(event.pointerId);
+}
+
 async function copyTranslation() {
   const text = String(current?.translation || "").trim();
   if (!text) return;
@@ -245,7 +489,13 @@ async function copyTranslation() {
 
 async function copyLayoutImage() {
   if (!canvasReady) return;
-  const dataUrl = layoutCanvas.toDataURL("image/png");
+  const output = document.createElement("canvas");
+  output.width = layoutCanvas.width;
+  output.height = layoutCanvas.height;
+  const context2d = output.getContext("2d", { alpha: false });
+  context2d.drawImage(layoutCanvas, 0, 0);
+  context2d.drawImage(drawingCanvas, 0, 0);
+  const dataUrl = output.toDataURL("image/png");
   const result = await window.inputBridge.copyResultImage(dataUrl);
   if (result?.ok) flashButton(copyImageButton, "Đã sao chép");
 }
@@ -256,33 +506,46 @@ function flashButton(button, text) {
   setTimeout(() => { button.textContent = previous; }, 1200);
 }
 
-function setZoom(nextZoom, keepCenter = true) {
-  const previous = zoom;
+function setZoom(nextZoom, keepAnchor = true, anchorPoint = null) {
+  const wrapRect = canvasWrap.getBoundingClientRect();
+  const stageRect = canvasStage.getBoundingClientRect();
+  const anchorX = Number.isFinite(anchorPoint?.clientX)
+    ? anchorPoint.clientX
+    : wrapRect.left + canvasWrap.clientWidth / 2;
+  const anchorY = Number.isFinite(anchorPoint?.clientY)
+    ? anchorPoint.clientY
+    : wrapRect.top + canvasWrap.clientHeight / 2;
+  const stageRatioX = stageRect.width
+    ? clamp((anchorX - stageRect.left) / stageRect.width, 0, 1)
+    : 0.5;
+  const stageRatioY = stageRect.height
+    ? clamp((anchorY - stageRect.top) / stageRect.height, 0, 1)
+    : 0.5;
+
   zoom = clamp(Math.round(nextZoom * 100) / 100, 0.5, 4);
-  const centerX = canvasWrap.scrollLeft + canvasWrap.clientWidth / 2;
-  const centerY = canvasWrap.scrollTop + canvasWrap.clientHeight / 2;
-  layoutCanvas.style.width = `${zoom * 100}%`;
-  layoutCanvas.style.maxWidth = "none";
+  canvasStage.style.width = `${zoom * 100}%`;
+  canvasStage.style.maxWidth = "none";
   zoomResetButton.textContent = `${Math.round(zoom * 100)}%`;
   zoomOutButton.disabled = zoom <= 0.5;
   zoomInButton.disabled = zoom >= 4;
-  if (keepCenter && previous > 0) {
-    requestAnimationFrame(() => {
-      const ratio = zoom / previous;
-      canvasWrap.scrollLeft = centerX * ratio - canvasWrap.clientWidth / 2;
-      canvasWrap.scrollTop = centerY * ratio - canvasWrap.clientHeight / 2;
-    });
+  if (keepAnchor) {
+    const nextStageRect = canvasStage.getBoundingClientRect();
+    const nextAnchorX = nextStageRect.left + nextStageRect.width * stageRatioX;
+    const nextAnchorY = nextStageRect.top + nextStageRect.height * stageRatioY;
+    canvasWrap.scrollLeft += nextAnchorX - anchorX;
+    canvasWrap.scrollTop += nextAnchorY - anchorY;
   }
+  requestAnimationFrame(syncSelectableTextScale);
 }
 
 function onCanvasWheel(event) {
   if (!event.ctrlKey) return;
   event.preventDefault();
-  setZoom(zoom + (event.deltaY < 0 ? 0.25 : -0.25));
+  setZoom(zoom + (event.deltaY < 0 ? 0.25 : -0.25), true, event);
 }
 
 function onPanStart(event) {
-  if (event.button !== 0 || zoom <= 1) return;
+  if (interactionMode !== "select" || event.button !== 1 || zoom <= 1) return;
   isPanning = true;
   panStart = { x: event.clientX, y: event.clientY, left: canvasWrap.scrollLeft, top: canvasWrap.scrollTop };
   canvasWrap.setPointerCapture(event.pointerId);

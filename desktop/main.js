@@ -217,16 +217,17 @@ function createTray() {
 function createMainWindow({ showOnReady = true } = {}) {
   mainWindow = new BrowserWindow({
     width: 420,
-    height: 680,
+    height: 500,
     minWidth: 390,
-    minHeight: 560,
+    minHeight: 460,
     show: false,
     frame: false,
-    transparent: true,
-    backgroundMaterial: "acrylic",
+    transparent: false,
+    hasShadow: true,
+    roundedCorners: true,
     title: "InputBridge Desktop",
     icon: getIconPath(),
-    backgroundColor: "#00000000",
+    backgroundColor: "#f1f6fb",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -658,16 +659,14 @@ async function runOcr(imagePath, languageTag) {
   }
 }
 
-function createResultWindow(display, rect, initialData) {
+function createResultWindow(display, _rect, initialData) {
   if (resultWindow && !resultWindow.isDestroyed()) resultWindow.close();
   const layoutMode = initialData?.mode === "layout";
   const width = layoutMode ? Math.min(780, Math.max(560, display.workArea.width - 80)) : 500;
   const height = layoutMode ? Math.min(680, Math.max(460, display.workArea.height - 80)) : (settings.showOriginal ? 480 : 360);
   const work = display.workArea;
-  let x = display.bounds.x + rect.x + rect.width + 12;
-  if (x + width > work.x + work.width) x = display.bounds.x + rect.x - width - 12;
-  x = clamp(x, work.x, work.x + work.width - width);
-  const y = clamp(display.bounds.y + rect.y, work.y, work.y + work.height - height);
+  const x = Math.round(work.x + (work.width - width) / 2);
+  const y = Math.round(work.y + (work.height - height) / 2);
 
   const win = new BrowserWindow({
     x,
@@ -680,7 +679,7 @@ function createResultWindow(display, rect, initialData) {
     transparent: true,
     backgroundColor: "#00000000",
     alwaysOnTop: true,
-    skipTaskbar: true,
+    skipTaskbar: false,
     resizable: true,
     show: false,
     icon: getIconPath(),
@@ -699,13 +698,23 @@ function createResultWindow(display, rect, initialData) {
   win.removeMenu();
   win.loadFile(path.join(__dirname, "result", "index.html"));
   win.once("ready-to-show", () => {
-    if (!win.isDestroyed()) win.show();
+    if (win.isDestroyed()) return;
+    const [actualWidth, actualHeight] = win.getSize();
+    win.setPosition(
+      Math.round(work.x + (work.width - actualWidth) / 2),
+      Math.round(work.y + (work.height - actualHeight) / 2),
+      false
+    );
+    win.show();
   });
   win.on("focus", () => {
     if (!win.isDestroyed()) win.setAlwaysOnTop(true, "floating");
   });
   win.on("blur", () => {
     if (!win.isDestroyed()) win.setAlwaysOnTop(false);
+  });
+  win.on("show", () => {
+    if (!win.isDestroyed()) win.moveTop();
   });
   win.on("closed", () => {
     resultContexts.delete(webContentsId);

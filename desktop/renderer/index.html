@@ -19,12 +19,12 @@
     </header>
 
     <main class="app-shell">
-      <header class="hero">
+      <header class="hero compact-hero">
         <img class="brand-mark" src="../assets/icon128.png" alt="InputBridge">
         <div>
           <p class="eyebrow">INPUTBRIDGE DESKTOP</p>
           <h1>Chụp màn hình để dịch</h1>
-          <p class="lead">Kéo chọn vùng chữ ở bất kỳ app nào. InputBridge OCR rồi đặt bản dịch ngay cạnh vùng chọn.</p>
+          <p class="lead">Chọn vùng chữ, InputBridge sẽ nhận dạng và dịch ngay cạnh vùng chọn.</p>
         </div>
       </header>
 
@@ -37,72 +37,65 @@
         <span class="capture-chevron" aria-hidden="true">›</span>
       </button>
 
-      <section class="glass-card shortcut-card">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">PHÍM TẮT</p>
-            <h2>Chụp để dịch</h2>
-          </div>
-          <span class="status-pill">Global</span>
-        </div>
-
-        <div class="hotkey-row">
-          <button id="hotkeyRecorder" class="hotkey-recorder" type="button">
-            <span id="hotkeyValue">Ctrl + Shift + X</span>
-            <small id="hotkeyHint">Bấm vào đây rồi nhấn tổ hợp mới</small>
-          </button>
-          <button id="resetHotkeyButton" class="secondary-button" type="button">Đặt lại</button>
-        </div>
-        <p class="field-note">Phím được đăng ký toàn hệ thống. Nếu Windows hoặc app khác đang chiếm, InputBridge sẽ giữ phím cũ.</p>
-      </section>
-
-      <section class="glass-card">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">NGÔN NGỮ</p>
-            <h2>Nhận dạng và dịch</h2>
-          </div>
+      <section class="glass-card translation-card">
+        <div class="section-heading compact-heading">
+          <h2>Dịch</h2>
           <span class="ready-dot" role="status" aria-label="Sẵn sàng" title="Sẵn sàng"></span>
         </div>
 
-        <div class="field">
-          <span>Ngôn ngữ chữ trên màn hình</span>
+        <label class="field compact-field">
+          <span>Ngôn ngữ gốc</span>
           <select id="sourceLanguage"></select>
-          <small>Chọn đúng ngôn ngữ giúp Windows OCR chính xác hơn. Auto dùng các language pack đang có trên máy.</small>
-        </div>
+        </label>
 
-        <div class="field">
+        <label class="field compact-field">
           <span>Dịch sang</span>
           <select id="targetLanguage"></select>
-        </div>
+        </label>
 
-        <label class="toggle-row">
-          <span>
-            <strong>Hiện cả chữ gốc</strong>
-            <small>Tắt để popup chỉ còn bản dịch.</small>
-          </span>
+        <label class="toggle-row compact-toggle">
+          <span><strong>Hiện chữ gốc</strong></span>
           <input id="showOriginal" type="checkbox">
           <i aria-hidden="true"></i>
         </label>
       </section>
 
-      <section class="glass-card compact system-card">
-        <label class="toggle-row standalone">
-          <span>
-            <strong>Khởi động cùng Windows</strong>
-            <small>Chạy ẩn dưới tray để phím tắt dùng được ngay sau khi đăng nhập.</small>
-          </span>
-          <input id="startupEnabled" type="checkbox">
-          <i aria-hidden="true"></i>
-        </label>
-      </section>
+      <section class="glass-card advanced-card">
+        <button id="advancedToggle" class="advanced-toggle" type="button" aria-expanded="false" aria-controls="advancedContent">
+          <strong>Cài đặt nâng cao</strong>
+          <span class="advanced-chevron" aria-hidden="true"></span>
+        </button>
 
-      <section class="glass-card compact">
-        <div class="engine-row">
-          <span class="engine-icon" aria-hidden="true">OCR</span>
-          <div>
-            <strong>Windows OCR + Google Translate</strong>
-            <small>OCR chạy trên máy. Chỉ text nhận dạng được mới gửi đi dịch.</small>
+        <div id="advancedContent" class="advanced-content" hidden>
+          <div class="advanced-block">
+            <div class="advanced-label">
+              <strong>Phím tắt toàn hệ thống</strong>
+              <small>Dùng ở mọi ứng dụng</small>
+            </div>
+            <div class="hotkey-row">
+              <button id="hotkeyRecorder" class="hotkey-recorder" type="button">
+                <span id="hotkeyValue">Ctrl + Shift + X</span>
+                <small id="hotkeyHint">Bấm rồi nhấn tổ hợp mới</small>
+              </button>
+              <button id="resetHotkeyButton" class="secondary-button" type="button">Đặt lại</button>
+            </div>
+          </div>
+
+          <label class="toggle-row advanced-setting-row">
+            <span>
+              <strong>Khởi động cùng Windows</strong>
+              <small>Chạy ẩn dưới khay hệ thống</small>
+            </span>
+            <input id="startupEnabled" type="checkbox">
+            <i aria-hidden="true"></i>
+          </label>
+
+          <div class="engine-inline">
+            <span class="engine-icon" aria-hidden="true">OCR</span>
+            <span>
+              <strong>Windows OCR · Google Translate</strong>
+              <small>OCR chạy trên máy, chỉ nội dung nhận dạng mới được gửi đi dịch.</small>
+            </span>
           </div>
         </div>
       </section>

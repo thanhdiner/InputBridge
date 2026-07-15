@@ -10,6 +10,8 @@ const hotkeyHint = document.getElementById("hotkeyHint");
 const resetHotkeyButton = document.getElementById("resetHotkeyButton");
 const minimizeButton = document.getElementById("minimizeButton");
 const closeAppButton = document.getElementById("closeAppButton");
+const advancedToggle = document.getElementById("advancedToggle");
+const advancedContent = document.getElementById("advancedContent");
 const message = document.getElementById("message");
 
 const DEFAULT_HOTKEY = "CommandOrControl+Shift+X";
@@ -51,6 +53,7 @@ async function init() {
   resetHotkeyButton.addEventListener("click", () => setHotkey(DEFAULT_HOTKEY));
   minimizeButton.addEventListener("click", () => window.inputBridge.minimizeWindow());
   closeAppButton.addEventListener("click", () => window.inputBridge.closeWindow());
+  advancedToggle.addEventListener("click", toggleAdvancedSettings);
   document.addEventListener("keydown", handleHotkeyRecording, true);
   window.inputBridge.onWarning((warning) => showMessage(warning));
 }
@@ -275,6 +278,15 @@ function createMacSelect(select, { searchPlaceholder, emptyText }) {
   });
   select.addEventListener("change", syncValue);
   syncValue();
+}
+
+function toggleAdvancedSettings() {
+  const expanded = advancedToggle.getAttribute("aria-expanded") === "true";
+  advancedToggle.setAttribute("aria-expanded", String(!expanded));
+  advancedContent.hidden = expanded;
+  if (!expanded) {
+    requestAnimationFrame(() => advancedToggle.scrollIntoView({ block: "nearest", behavior: "smooth" }));
+  }
 }
 
 function scheduleSave() {

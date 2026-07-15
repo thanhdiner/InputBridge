@@ -25,22 +25,28 @@
     <img id="preview" class="preview" alt="Vùng vừa chụp" hidden>
 
     <section id="layoutBlock" class="layout-result" hidden>
-      <div class="layout-heading">
-        <div>
-          <span>ẢNH ĐÃ DỊCH</span>
-          <small>Giữ vị trí từng vùng chữ</small>
+      <div class="workspace-toolbar">
+        <div class="mode-control" role="tablist" aria-label="Công cụ tương tác">
+          <button id="selectTextButton" class="active" type="button" role="tab" aria-selected="true" title="Bôi đen và sao chép chữ">Chọn</button>
+          <button id="drawButton" type="button" role="tab" aria-selected="false" title="Vẽ lên ảnh">Vẽ</button>
+          <button id="eraseButton" type="button" role="tab" aria-selected="false" title="Tẩy nét vẽ">Tẩy</button>
         </div>
-        <div class="layout-actions">
-          <div class="zoom-controls" aria-label="Điều khiển ảnh">
-            <button id="zoomOutButton" type="button" title="Thu nhỏ">−</button>
-            <button id="zoomResetButton" type="button" title="Vừa khung">100%</button>
-            <button id="zoomInButton" type="button" title="Phóng to">+</button>
-          </div>
-          <button id="copyImageButton" type="button">Sao chép ảnh</button>
+        <button id="clearDrawingButton" class="quiet-action" type="button" title="Xóa toàn bộ nét vẽ" disabled>Xóa nét</button>
+        <div class="toolbar-spacer"></div>
+        <div class="zoom-controls" aria-label="Điều khiển ảnh">
+          <button id="zoomOutButton" type="button" title="Thu nhỏ">−</button>
+          <button id="zoomResetButton" type="button" title="Vừa khung">100%</button>
+          <button id="zoomInButton" type="button" title="Phóng to">+</button>
         </div>
+        <button id="copyImageButton" class="primary-action" type="button"><span aria-hidden="true">⧉</span>Sao chép</button>
       </div>
-      <div id="canvasWrap" class="canvas-wrap">
-        <canvas id="layoutCanvas"></canvas>
+      <div id="canvasWrap" class="canvas-wrap mode-select">
+        <div id="canvasStage" class="canvas-stage">
+          <canvas id="layoutCanvas"></canvas>
+          <div id="textLayer" class="text-layer" aria-label="Chữ đã dịch có thể bôi đen"></div>
+          <canvas id="drawingCanvas" class="drawing-canvas"></canvas>
+        </div>
+        <div id="interactionHint" class="interaction-hint">Bôi đen chữ để hiện nút sao chép · Ctrl + lăn để phóng to</div>
       </div>
     </section>
 
@@ -64,9 +70,12 @@
 
     <footer>
       <span id="meta"></span>
-      <button id="recaptureButton" class="recapture" type="button">Chụp vùng khác</button>
+      <button id="recaptureButton" class="recapture" type="button">Chụp lại</button>
     </footer>
   </main>
+  <div id="selectionToolbar" class="selection-toolbar" role="toolbar" aria-label="Thao tác với chữ đã chọn" hidden>
+    <button id="copySelectionButton" type="button" data-tooltip="Sao chép bằng Ctrl+C" aria-label="Sao chép chữ đã chọn. Phím tắt Ctrl+C"><span aria-hidden="true">⧉</span><strong>Sao chép</strong></button>
+  </div>
   <script src="result.js"></script>
 </body>
 </html>
