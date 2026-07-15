@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>InputBridge Desktop</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-window">
+    <header class="titlebar">
+      <div class="traffic-lights" aria-label="Điều khiển cửa sổ">
+        <button id="closeAppButton" class="traffic close" type="button" aria-label="Ẩn cửa sổ" title="Ẩn cửa sổ · InputBridge vẫn chạy dưới khay hệ thống"></button>
+        <button id="minimizeButton" class="traffic minimize" type="button" title="Thu nhỏ"></button>
+        <span class="traffic zoom" aria-hidden="true"></span>
+      </div>
+      <div class="titlebar-title"><img src="../assets/icon128.png" alt=""> InputBridge</div>
+      <div class="titlebar-spacer"></div>
+    </header>
+
+    <main class="app-shell">
+      <header class="hero">
+        <img class="brand-mark" src="../assets/icon128.png" alt="InputBridge">
+        <div>
+          <p class="eyebrow">INPUTBRIDGE DESKTOP</p>
+          <h1>Chụp màn hình để dịch</h1>
+          <p class="lead">Kéo chọn vùng chữ ở bất kỳ app nào. InputBridge OCR rồi đặt bản dịch ngay cạnh vùng chọn.</p>
+        </div>
+      </header>
+
+      <button id="captureButton" class="capture-button" type="button">
+        <span class="capture-icon" aria-hidden="true"></span>
+        <span class="capture-copy">
+          <strong>Chọn vùng để dịch</strong>
+          <small id="hotkeyLabel">Ctrl + Shift + X</small>
+        </span>
+        <span class="capture-chevron" aria-hidden="true">›</span>
+      </button>
+
+      <section class="glass-card shortcut-card">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">PHÍM TẮT</p>
+            <h2>Chụp để dịch</h2>
+          </div>
+          <span class="status-pill">Global</span>
+        </div>
+
+        <div class="hotkey-row">
+          <button id="hotkeyRecorder" class="hotkey-recorder" type="button">
+            <span id="hotkeyValue">Ctrl + Shift + X</span>
+            <small id="hotkeyHint">Bấm vào đây rồi nhấn tổ hợp mới</small>
+          </button>
+          <button id="resetHotkeyButton" class="secondary-button" type="button">Đặt lại</button>
+        </div>
+        <p class="field-note">Phím được đăng ký toàn hệ thống. Nếu Windows hoặc app khác đang chiếm, InputBridge sẽ giữ phím cũ.</p>
+      </section>
+
+      <section class="glass-card">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">NGÔN NGỮ</p>
+            <h2>Nhận dạng và dịch</h2>
+          </div>
+          <span class="ready-dot" role="status" aria-label="Sẵn sàng" title="Sẵn sàng"></span>
+        </div>
+
+        <div class="field">
+          <span>Ngôn ngữ chữ trên màn hình</span>
+          <select id="sourceLanguage"></select>
+          <small>Chọn đúng ngôn ngữ giúp Windows OCR chính xác hơn. Auto dùng các language pack đang có trên máy.</small>
+        </div>
+
+        <div class="field">
+          <span>Dịch sang</span>
+          <select id="targetLanguage"></select>
+        </div>
+
+        <label class="toggle-row">
+          <span>
+            <strong>Hiện cả chữ gốc</strong>
+            <small>Tắt để popup chỉ còn bản dịch.</small>
+          </span>
+          <input id="showOriginal" type="checkbox">
+          <i aria-hidden="true"></i>
+        </label>
+      </section>
+
+      <section class="glass-card compact system-card">
+        <label class="toggle-row standalone">
+          <span>
+            <strong>Khởi động cùng Windows</strong>
+            <small>Chạy ẩn dưới tray để phím tắt dùng được ngay sau khi đăng nhập.</small>
+          </span>
+          <input id="startupEnabled" type="checkbox">
+          <i aria-hidden="true"></i>
+        </label>
+      </section>
+
+      <section class="glass-card compact">
+        <div class="engine-row">
+          <span class="engine-icon" aria-hidden="true">OCR</span>
+          <div>
+            <strong>Windows OCR + Google Translate</strong>
+            <small>OCR chạy trên máy. Chỉ text nhận dạng được mới gửi đi dịch.</small>
+          </div>
+        </div>
+      </section>
+
+      <p id="message" class="message" role="status"></p>
+    </main>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chọn vùng dịch</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <img id="screenImage" alt="">
+  <div id="shade"></div>
+
+  <div id="captureToolbar" class="capture-toolbar" role="toolbar" aria-label="Chế độ chụp dịch">
+    <div class="mode-switch" role="tablist" aria-label="Kiểu kết quả">
+      <button id="modeText" class="mode-button active" type="button" role="tab" aria-selected="true">
+        <span class="mode-icon text-icon" aria-hidden="true"></span>
+        <span><strong>Văn bản</strong><small>Gom text vào popup</small></span>
+      </button>
+      <button id="modeLayout" class="mode-button" type="button" role="tab" aria-selected="false">
+        <span class="mode-icon layout-icon" aria-hidden="true"></span>
+        <span><strong>Trong ảnh</strong><small>Giữ vị trí từng vùng</small></span>
+      </button>
+    </div>
+  </div>
+
+  <div id="selection" hidden>
+    <span class="corner tl"></span><span class="corner tr"></span>
+    <span class="corner bl"></span><span class="corner br"></span>
+    <span id="sizeLabel" class="size-label"></span>
+  </div>
+
+  <div id="hint" class="hint">
+    <strong id="hintTitle">Kéo chọn vùng chữ cần dịch</strong>
+    <span id="hintDetail">Esc hoặc chuột phải để hủy</span>
+  </div>
+  <script src="selection.js"></script>
+</body>
+</html>

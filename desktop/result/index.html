@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bản dịch</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="card">
+    <header class="titlebar">
+      <div class="traffic-lights">
+        <button id="closeButton" class="traffic close" type="button" title="Đóng"></button>
+        <span class="traffic minimize" aria-hidden="true"></span>
+        <span class="traffic zoom" aria-hidden="true"></span>
+      </div>
+      <div class="brand"><img src="../assets/icon128.png" alt=""><strong id="resultTitle">Dịch màn hình</strong></div>
+      <button id="openMainButton" class="settings-button" type="button" title="Mở InputBridge">⚙</button>
+    </header>
+
+    <div id="loading" class="loading-row">
+      <i></i><span id="loadingText">Đang nhận dạng chữ…</span>
+    </div>
+
+    <img id="preview" class="preview" alt="Vùng vừa chụp" hidden>
+
+    <section id="layoutBlock" class="layout-result" hidden>
+      <div class="layout-heading">
+        <div>
+          <span>ẢNH ĐÃ DỊCH</span>
+          <small>Giữ vị trí từng vùng chữ</small>
+        </div>
+        <div class="layout-actions">
+          <div class="zoom-controls" aria-label="Điều khiển ảnh">
+            <button id="zoomOutButton" type="button" title="Thu nhỏ">−</button>
+            <button id="zoomResetButton" type="button" title="Vừa khung">100%</button>
+            <button id="zoomInButton" type="button" title="Phóng to">+</button>
+          </div>
+          <button id="copyImageButton" type="button">Sao chép ảnh</button>
+        </div>
+      </div>
+      <div id="canvasWrap" class="canvas-wrap">
+        <canvas id="layoutCanvas"></canvas>
+      </div>
+    </section>
+
+    <section id="originalBlock" class="text-block original" hidden>
+      <div class="label-row"><span>Văn bản gốc</span></div>
+      <p id="originalText"></p>
+    </section>
+
+    <section id="translationBlock" class="text-block translation" hidden>
+      <div class="label-row">
+        <span>Bản dịch</span>
+        <button id="copyButton" type="button">Sao chép</button>
+      </div>
+      <p id="translationText"></p>
+    </section>
+
+    <section id="errorBlock" class="error-block" hidden>
+      <strong>Không dịch được</strong>
+      <p id="errorText"></p>
+    </section>
+
+    <footer>
+      <span id="meta"></span>
+      <button id="recaptureButton" class="recapture" type="button">Chụp vùng khác</button>
+    </footer>
+  </main>
+  <script src="result.js"></script>
+</body>
+</html>

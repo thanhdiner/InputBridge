@@ -3,7 +3,7 @@ import "./languages.js";
 const LANGUAGE_CATALOG = globalThis.InputBridgeLanguageCatalog;
 
 const DEFAULT_SETTINGS = {
-  settingsVersion: 19,
+  settingsVersion: 24,
   enabled: true,
   demoMode: false,
   engine: "google",
@@ -32,11 +32,16 @@ const DEFAULT_SETTINGS = {
   selectionShiftTranslate: true,
   selectionAllowEditable: false,
   selectionMinChars: 2,
-  selectionMaxChars: 1000,
+  selectionMaxChars: 20000,
   selectionCardTheme: "light",
   videoSubtitleEnabled: false,
   videoSubtitleBilingual: false,
+  videoSubtitleShowSource: false,
+  videoSubtitleShowTranslation: true,
   videoSubtitleKeepOriginal: false,
+  videoDubbingEnabled: false,
+  videoDubbingOriginalVolume: 0.2,
+  videoDubbingVoiceByLanguage: {},
   videoSubtitleSourceLanguage: "auto",
   videoSubtitleTargetLanguage: "Vietnamese",
   videoSubtitleEngine: "google",
@@ -66,7 +71,19 @@ const TRANSLATION_CACHE = new Map();
 const TRANSLATION_CACHE_LIMIT = 300;
 const VIDEO_CAPTION_CACHE = new Map();
 const VIDEO_CAPTION_CACHE_LIMIT = 600;
+const VIDEO_DUBBING_TTS_CACHE = new Map();
+const VIDEO_DUBBING_TTS_CACHE_LIMIT = 80;
+const VIDEO_DUBBING_TTS_TIMEOUT_MS = 12000;
+const EDGE_TTS_GATEWAY_BASE = "http://127.0.0.1:38765";
+const EDGE_TTS_TRUSTED_CLIENT_TOKEN = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
+const EDGE_TTS_VOICE_LIST_URL = `https://speech.platform.bing.com/consumer/speech/synthesize/readaloud/voices/list?trustedclienttoken=${EDGE_TTS_TRUSTED_CLIENT_TOKEN}`;
+const EDGE_TTS_VOICE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+let edgeTtsVoiceCache = null;
+let edgeTtsVoiceCacheAt = 0;
 const TRANSLATION_TIMEOUT_MS = 8000;
+const SELECTION_TRANSLATION_MAX_CHARS = 20000;
+const SELECTION_TRANSLATION_CHUNK_CHARS = 4000;
+const SELECTION_TRANSLATION_CHUNK_WORKERS = 2;
 const LLM_TIMEOUT_MS = 15000;
 const GEMINI_OPENAI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai";
 const LLM_API_KEY_LIMIT = 5;
@@ -201,6 +218,18 @@ async function handleMessage(message, sender) {
   if (message.type === "IB_GET_SETTINGS") {
     const settings = await getSettings();
     return { ok: true, settings: withSiteSettings(settings, message.origin || sender?.tab?.url) };
+  }
+
+  if (message.type === "IB_VIDEO_DUBBING_VOICES") {
+    return fetchVideoDubbingVoices(message.language || "Vietnamese");
+  }
+
+  if (message.type === "IB_VIDEO_DUBBING_TTS") {
+    const settings = withSiteSettings(await getSettings(), message.origin || sender?.tab?.url);
+    if (!settings.enabled || !settings.videoSubtitleEnabled || !settings.videoDubbingEnabled) {
+      return { ok: false, error: "Video dubbing is disabled here." };
+    }
+    return fetchVideoDubbingTts(message);
   }
 
   if (message.type === "IB_SAVE_SETTINGS") {
@@ -342,7 +371,11 @@ async function handleMessage(message, sender) {
 
 async function translateDictionaryPayload(message, settings) {
   const text = String(message.text || "").trim();
-  const maxChars = clamp(Number(message.maxChars || settings.selectionMaxChars || 1000), 20, 5000);
+  const maxChars = clamp(
+    Number(message.maxChars || settings.selectionMaxChars || SELECTION_TRANSLATION_MAX_CHARS),
+    20,
+    SELECTION_TRANSLATION_MAX_CHARS
+  );
   if (!text) return { ok: false, error: "Empty text" };
   if (text.length > maxChars) return { ok: false, error: `Text is longer than ${maxChars} characters.` };
 
@@ -355,9 +388,12 @@ async function translateDictionaryPayload(message, settings) {
   const dictionaryCandidate = isDictionaryCandidate(text);
   let actualTargetLanguage = preferredTargetLanguage;
   let actualTargetCode = preferredTargetCode;
-  let translation = await callGoogleTranslateDetailed(text, preferredSourceCode, preferredTargetCode, {
-    dictionary: dictionaryCandidate
-  });
+  let translation = await callGoogleTranslateSelectionDetailed(
+    text,
+    preferredSourceCode,
+    preferredTargetCode,
+    { dictionary: dictionaryCandidate }
+  );
 
   if (sameLanguageCode(translation.detectedSource, preferredTargetCode)) {
     let fallbackLanguage = message.fallbackLanguage || settings.backTranslationLanguage || "Vietnamese";
@@ -368,7 +404,7 @@ async function translateDictionaryPayload(message, settings) {
       fallbackCode = languageToCode(fallbackLanguage);
     }
 
-    translation = await callGoogleTranslateDetailed(
+    translation = await callGoogleTranslateSelectionDetailed(
       text,
       translation.detectedSource || preferredSourceCode || "auto",
       fallbackCode,
@@ -391,9 +427,127 @@ async function translateDictionaryPayload(message, settings) {
       dictionary: Array.isArray(translation.dictionary) ? translation.dictionary : [],
       phonetic: translation.phonetic || "",
       headword: translation.headword || text,
+      chunked: Number(translation.chunkCount || 1) > 1,
+      chunkCount: Number(translation.chunkCount || 1),
       tone: "machine-translation"
     }
   };
+}
+
+async function callGoogleTranslateSelectionDetailed(text, sourceCode, targetCode, options = {}) {
+  const sourceText = String(text || "").trim();
+  const useDictionary = Boolean(options.dictionary);
+  if (useDictionary || sourceText.length <= SELECTION_TRANSLATION_CHUNK_CHARS) {
+    return callGoogleTranslateDetailed(sourceText, sourceCode, targetCode, options);
+  }
+  return callGoogleTranslateChunkedDetailed(sourceText, sourceCode, targetCode);
+}
+
+async function callGoogleTranslateChunkedDetailed(text, sourceCode, targetCode) {
+  const chunks = splitTranslationChunks(text, SELECTION_TRANSLATION_CHUNK_CHARS);
+  if (chunks.length <= 1) {
+    return callGoogleTranslateDetailed(text, sourceCode, targetCode);
+  }
+
+  const results = new Array(chunks.length);
+  const first = await callGoogleTranslateDetailed(chunks[0].text, sourceCode, targetCode);
+  results[0] = first.result;
+
+  const stableSourceCode = sourceCode === "auto" && first.detectedSource
+    ? first.detectedSource
+    : sourceCode;
+  let cursor = 1;
+
+  async function worker() {
+    while (cursor < chunks.length) {
+      const index = cursor;
+      cursor += 1;
+      try {
+        const translated = await callGoogleTranslateDetailed(
+          chunks[index].text,
+          stableSourceCode || "auto",
+          targetCode
+        );
+        results[index] = translated.result;
+      } catch (error) {
+        throw new Error(
+          `Translation chunk ${index + 1}/${chunks.length} failed: ${error?.message || String(error)}`
+        );
+      }
+    }
+  }
+
+  const workerCount = Math.min(
+    SELECTION_TRANSLATION_CHUNK_WORKERS,
+    Math.max(0, chunks.length - 1)
+  );
+  await Promise.all(Array.from({ length: workerCount }, worker));
+
+  return {
+    result: chunks
+      .map((chunk, index) => `${chunk.prefix}${results[index] || ""}${chunk.suffix}`)
+      .join(""),
+    detectedSource: first.detectedSource || (sourceCode === "auto" ? "" : sourceCode),
+    dictionary: [],
+    phonetic: "",
+    headword: text,
+    chunkCount: chunks.length
+  };
+}
+
+function splitTranslationChunks(text, maxChars) {
+  const source = String(text || "");
+  const chunks = [];
+  let cursor = 0;
+
+  while (cursor < source.length) {
+    const end = chooseTranslationChunkEnd(source, cursor, maxChars);
+    const raw = source.slice(cursor, end);
+    const prefix = raw.match(/^\s*/u)?.[0] || "";
+    const suffix = raw.match(/\s*$/u)?.[0] || "";
+    const bodyEnd = Math.max(prefix.length, raw.length - suffix.length);
+    const body = raw.slice(prefix.length, bodyEnd);
+
+    if (body) {
+      chunks.push({ text: body, prefix, suffix });
+    } else if (chunks.length) {
+      chunks[chunks.length - 1].suffix += raw;
+    }
+
+    cursor = end > cursor ? end : Math.min(source.length, cursor + maxChars);
+  }
+
+  return chunks;
+}
+
+function chooseTranslationChunkEnd(text, start, maxChars) {
+  const hardEnd = Math.min(text.length, start + maxChars);
+  if (hardEnd >= text.length) return text.length;
+
+  const windowText = text.slice(start, hardEnd);
+  const minimumBoundary = Math.floor(maxChars * 0.55);
+
+  const paragraphBreak = windowText.lastIndexOf("\n\n");
+  if (paragraphBreak >= minimumBoundary) return start + paragraphBreak + 2;
+
+  const lineBreak = windowText.lastIndexOf("\n");
+  if (lineBreak >= minimumBoundary) return start + lineBreak + 1;
+
+  let sentenceBreak = -1;
+  const sentenceBoundary = /[.!?。！？…](?:["'”’)}\]»]+)?\s+/gu;
+  for (const match of windowText.matchAll(sentenceBoundary)) {
+    const candidate = Number(match.index || 0) + match[0].length;
+    if (candidate >= minimumBoundary) sentenceBreak = candidate;
+  }
+  if (sentenceBreak >= minimumBoundary) return start + sentenceBreak;
+
+  const wordBreak = Math.max(
+    windowText.lastIndexOf(" "),
+    windowText.lastIndexOf("\t")
+  );
+  if (wordBreak >= minimumBoundary) return start + wordBreak + 1;
+
+  return hardEnd;
 }
 
 async function translateVideoCaptionBatchPayload(message, settings) {
@@ -683,6 +837,15 @@ function migrateSettings(stored = {}) {
     stored.aiEnhance === true &&
     !getApiKeys(stored).length;
   const upgradeVideoSubtitleStyle = Number(stored.settingsVersion || 0) < 19;
+  const upgradeSelectionMaxChars =
+    Number(stored.settingsVersion || 0) < 22 &&
+    [1000, 5000].includes(Number(stored.selectionMaxChars || 5000));
+  const videoSubtitleShowSource = Boolean(
+    stored.videoSubtitleShowSource ?? stored.videoSubtitleBilingual ?? false
+  );
+  const videoSubtitleShowTranslation = Boolean(
+    stored.videoSubtitleShowTranslation ?? true
+  );
 
   return {
     ...stored,
@@ -695,7 +858,9 @@ function migrateSettings(stored = {}) {
     selectionShiftTranslate: stored.selectionShiftTranslate ?? true,
     selectionAllowEditable: stored.selectionAllowEditable ?? false,
     selectionMinChars: Number(stored.selectionMinChars || 2),
-    selectionMaxChars: Number(stored.selectionMaxChars || 1000),
+    selectionMaxChars: upgradeSelectionMaxChars
+      ? SELECTION_TRANSLATION_MAX_CHARS
+      : Number(stored.selectionMaxChars || SELECTION_TRANSLATION_MAX_CHARS),
     selectionCardTheme: stored.selectionCardTheme || "light",
     llmProvider: stored.llmProvider || "9router",
     llmBaseUrl: stored.llmBaseUrl || "http://localhost:20128/v1",
@@ -705,8 +870,13 @@ function migrateSettings(stored = {}) {
     writeTargetLanguage: stored.writeTargetLanguage || "English",
     uiLanguage: stored.uiLanguage || "vi",
     videoSubtitleEnabled: stored.videoSubtitleEnabled ?? false,
-    videoSubtitleBilingual: stored.videoSubtitleBilingual ?? false,
+    videoSubtitleBilingual: videoSubtitleShowSource && videoSubtitleShowTranslation,
+    videoSubtitleShowSource,
+    videoSubtitleShowTranslation,
     videoSubtitleKeepOriginal: false,
+    videoDubbingEnabled: stored.videoDubbingEnabled ?? false,
+    videoDubbingOriginalVolume: Number(stored.videoDubbingOriginalVolume ?? 0.2),
+    videoDubbingVoiceByLanguage: sanitizeVideoDubbingVoiceMap(stored.videoDubbingVoiceByLanguage),
     videoSubtitleSourceLanguage: stored.videoSubtitleSourceLanguage || "auto",
     videoSubtitleTargetLanguage: stored.videoSubtitleTargetLanguage || "Vietnamese",
     videoSubtitleEngine: stored.videoSubtitleEngine === "gemini" ? "gemini" : "google",
@@ -732,6 +902,19 @@ function migrateSettings(stored = {}) {
   };
 }
 
+function sanitizeVideoDubbingVoiceMap(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return {};
+  const out = {};
+  for (const [language, voice] of Object.entries(input)) {
+    const safeLanguage = String(language || "").trim().slice(0, 24);
+    const safeVoice = String(voice || "").trim().slice(0, 120);
+    if (!safeLanguage || !safeVoice || !/^[a-z]{2,3}(?:-[a-z0-9]{2,8})?$/i.test(safeLanguage)) continue;
+    if (!/^[a-z0-9-]+Neural$/i.test(safeVoice)) continue;
+    out[safeLanguage] = safeVoice;
+  }
+  return out;
+}
+
 function sanitizeSettings(input) {
   const out = {};
   for (const key of Object.keys(DEFAULT_SETTINGS)) {
@@ -740,8 +923,12 @@ function sanitizeSettings(input) {
   if (typeof out.debounceMs === "number") out.debounceMs = clamp(out.debounceMs, 300, 2500);
   if (typeof out.minChars === "number") out.minChars = clamp(out.minChars, 1, 200);
   if (typeof out.selectionMinChars === "number") out.selectionMinChars = clamp(out.selectionMinChars, 1, 20);
-  if (typeof out.selectionMaxChars === "number") out.selectionMaxChars = clamp(out.selectionMaxChars, 20, 5000);
+  if (typeof out.selectionMaxChars === "number") out.selectionMaxChars = clamp(out.selectionMaxChars, 20, SELECTION_TRANSLATION_MAX_CHARS);
   if (typeof out.videoSubtitleSyncOffsetMs === "number") out.videoSubtitleSyncOffsetMs = clamp(out.videoSubtitleSyncOffsetMs, -2000, 2000);
+  if (typeof out.videoDubbingOriginalVolume === "number") out.videoDubbingOriginalVolume = clamp(out.videoDubbingOriginalVolume, 0, 1);
+  if (Object.prototype.hasOwnProperty.call(out, "videoDubbingVoiceByLanguage")) {
+    out.videoDubbingVoiceByLanguage = sanitizeVideoDubbingVoiceMap(out.videoDubbingVoiceByLanguage);
+  }
   if (typeof out.videoSubtitleFontSize === "number") out.videoSubtitleFontSize = clamp(out.videoSubtitleFontSize, 16, 36);
   if (typeof out.videoSubtitleSourceFontSize === "number") out.videoSubtitleSourceFontSize = clamp(out.videoSubtitleSourceFontSize, 14, 42);
   if (typeof out.videoSubtitleTranslationFontSize === "number") out.videoSubtitleTranslationFontSize = clamp(out.videoSubtitleTranslationFontSize, 14, 42);
@@ -1194,6 +1381,189 @@ function rememberTranslation(key, value) {
     if (oldestKey !== undefined) TRANSLATION_CACHE.delete(oldestKey);
   }
   TRANSLATION_CACHE.set(key, value);
+}
+
+function rememberVideoDubbingTts(key, value) {
+  if (VIDEO_DUBBING_TTS_CACHE.size >= VIDEO_DUBBING_TTS_CACHE_LIMIT) {
+    const oldestKey = VIDEO_DUBBING_TTS_CACHE.keys().next().value;
+    if (oldestKey !== undefined) VIDEO_DUBBING_TTS_CACHE.delete(oldestKey);
+  }
+  VIDEO_DUBBING_TTS_CACHE.set(key, value);
+}
+
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function normalizeVideoDubbingLanguageCode(language) {
+  return String(languageToCode(language || "Vietnamese") || "en").trim().replace(/_/g, "-");
+}
+
+function normalizeEdgeVoice(raw) {
+  const name = String(raw?.ShortName || raw?.name || "").trim();
+  const locale = String(raw?.Locale || raw?.locale || "").trim().replace(/_/g, "-");
+  if (!name || !locale || !/Neural$/i.test(name)) return null;
+  return {
+    name,
+    locale,
+    gender: String(raw?.Gender || raw?.gender || "Unknown"),
+    friendlyName: String(raw?.FriendlyName || raw?.friendlyName || raw?.LocalName || raw?.localName || name),
+    localName: String(raw?.LocalName || raw?.localName || raw?.FriendlyName || raw?.friendlyName || name)
+  };
+}
+
+async function getEdgeTtsVoiceCatalog() {
+  if (edgeTtsVoiceCache && Date.now() - edgeTtsVoiceCacheAt < EDGE_TTS_VOICE_CACHE_TTL_MS) return edgeTtsVoiceCache;
+  const response = await fetch(EDGE_TTS_VOICE_LIST_URL, { headers: { Accept: "application/json" } });
+  if (!response.ok) throw new Error(`Edge voice list HTTP ${response.status}`);
+  const payload = await response.json();
+  edgeTtsVoiceCache = Array.isArray(payload) ? payload.map(normalizeEdgeVoice).filter(Boolean) : [];
+  edgeTtsVoiceCacheAt = Date.now();
+  return edgeTtsVoiceCache;
+}
+
+async function fetchVideoDubbingVoices(language) {
+  try {
+    const languageCode = normalizeVideoDubbingLanguageCode(language);
+    const wanted = languageCode.toLowerCase();
+    const wantedBase = wanted.split("-")[0];
+    const voices = (await getEdgeTtsVoiceCatalog())
+      .filter((voice) => {
+        const locale = voice.locale.toLowerCase();
+        return locale === wanted || locale.split("-")[0] === wantedBase;
+      })
+      .sort((left, right) => {
+        const leftExact = left.locale.toLowerCase() === wanted ? 1 : 0;
+        const rightExact = right.locale.toLowerCase() === wanted ? 1 : 0;
+        if (leftExact !== rightExact) return rightExact - leftExact;
+        return left.name.localeCompare(right.name);
+      });
+    return { ok: true, data: { languageCode, voices } };
+  } catch (error) {
+    return { ok: false, error: error?.message || String(error), data: { voices: [] } };
+  }
+}
+
+async function fetchEdgeVideoDubbingTts(message) {
+  const text = String(message.text || "").replace(/\s+/g, " ").trim().slice(0, 500);
+  if (!text) throw new Error("Empty dubbing text");
+  const languageCode = normalizeVideoDubbingLanguageCode(message.language || "Vietnamese");
+  const voice = String(message.voice || "").trim().slice(0, 120);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), VIDEO_DUBBING_TTS_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${EDGE_TTS_GATEWAY_BASE}/tts`, {
+      method: "POST",
+      signal: controller.signal,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, locale: languageCode, voice })
+    });
+    if (!response.ok) {
+      let detail = "";
+      try { detail = String((await response.json())?.error || ""); } catch {}
+      throw new Error(detail || `Edge TTS gateway HTTP ${response.status}`);
+    }
+    const buffer = await response.arrayBuffer();
+    if (!buffer.byteLength) throw new Error("Edge TTS returned empty audio");
+    const contentType = response.headers.get("content-type")?.split(";")[0] || "audio/mpeg";
+    let resolvedVoice = voice;
+    const responseVoice = response.headers.get("x-inputbridge-voice");
+    if (responseVoice) {
+      try { resolvedVoice = decodeURIComponent(responseVoice); } catch { resolvedVoice = responseVoice; }
+    }
+    return {
+      audioUrl: `data:${contentType};base64,${arrayBufferToBase64(buffer)}`,
+      languageCode,
+      voice: resolvedVoice,
+      provider: "edge"
+    };
+  } catch (error) {
+    if (error?.name === "AbortError") throw new Error("Edge TTS gateway timed out");
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchGoogleVideoDubbingTtsLegacy(message) {
+  const text = String(message.text || "").replace(/\s+/g, " ").trim().slice(0, 260);
+  if (!text) return { ok: false, error: "Empty dubbing text" };
+
+  const languageCode = languageToCode(message.language || "Vietnamese");
+  const cacheKey = `${languageCode}\u0000${text}`;
+  const cached = VIDEO_DUBBING_TTS_CACHE.get(cacheKey);
+  if (cached) return { ok: true, data: cached };
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), VIDEO_DUBBING_TTS_TIMEOUT_MS);
+  try {
+    const params = new URLSearchParams({
+      ie: "UTF-8",
+      client: "tw-ob",
+      tl: languageCode,
+      q: text
+    });
+    const response = await fetch(`https://translate.google.com/translate_tts?${params}`, {
+      signal: controller.signal,
+      headers: { Accept: "audio/mpeg,audio/*;q=0.9,*/*;q=0.8" }
+    });
+    if (!response.ok) throw new Error(`Google TTS HTTP ${response.status}`);
+
+    const buffer = await response.arrayBuffer();
+    if (!buffer.byteLength) throw new Error("Google TTS returned empty audio");
+    const contentType = response.headers.get("content-type")?.split(";")[0] || "audio/mpeg";
+    const data = {
+      audioUrl: `data:${contentType};base64,${arrayBufferToBase64(buffer)}`,
+      languageCode,
+      provider: "google"
+    };
+    rememberVideoDubbingTts(cacheKey, data);
+    return { ok: true, data };
+  } catch (error) {
+    const messageText = error?.name === "AbortError"
+      ? "Google TTS timed out"
+      : error?.message || String(error);
+    return { ok: false, error: messageText };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchVideoDubbingTts(message) {
+  const text = String(message.text || "").replace(/\s+/g, " ").trim().slice(0, 500);
+  if (!text) return { ok: false, error: "Empty dubbing text" };
+  const languageCode = normalizeVideoDubbingLanguageCode(message.language || "Vietnamese");
+  const voice = String(message.voice || "").trim().slice(0, 120);
+  const cacheKey = `edge\u0000${languageCode}\u0000${voice}\u0000${text}`;
+  const cached = VIDEO_DUBBING_TTS_CACHE.get(cacheKey);
+  if (cached) return { ok: true, data: cached };
+
+  let edgeError = "";
+  try {
+    const data = await fetchEdgeVideoDubbingTts({ ...message, text, language: languageCode, voice });
+    rememberVideoDubbingTts(cacheKey, data);
+    return { ok: true, data };
+  } catch (error) {
+    edgeError = error?.message || String(error);
+  }
+
+  const fallback = await fetchGoogleVideoDubbingTtsLegacy({ ...message, text, language: languageCode });
+  if (fallback?.ok && fallback.data) {
+    fallback.data.fallbackFrom = "edge";
+    fallback.data.fallbackError = edgeError;
+    rememberVideoDubbingTts(cacheKey, fallback.data);
+    return fallback;
+  }
+  return {
+    ok: false,
+    error: `${edgeError || "Edge TTS failed"}; ${fallback?.error || "Google TTS failed"}`
+  };
 }
 
 function languageToCode(language) {

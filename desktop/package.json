@@ -1,0 +1,60 @@
+{
+  "name": "inputbridge-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "author": "InputBridge",
+  "description": "InputBridge desktop screen capture OCR translator for Windows",
+  "main": "main.js",
+  "scripts": {
+    "start": "npm run build:ocr && electron .",
+    "start:app": "electron .",
+    "build:ocr": "dotnet publish native/OcrHelper/OcrHelper.csproj -c Release -r win-x64 --self-contained true -o native/OcrHelper/publish",
+    "dist": "npm run build:ocr && electron-builder --win portable"
+  },
+  "devDependencies": {
+    "electron": "43.1.0",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "com.inputbridge.desktop",
+    "productName": "InputBridge Desktop",
+    "asar": true,
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "assets/**/*",
+      "renderer/**/*",
+      "selection/**/*",
+      "result/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "native/OcrHelper/publish",
+        "to": "ocr",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "../icons/icon128.png",
+        "to": "icon128.png"
+      },
+      {
+        "from": "../languages.js",
+        "to": "languages.js"
+      }
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        "portable"
+      ],
+      "artifactName": "InputBridge-Desktop-${version}-${arch}.${ext}"
+    }
+  },
+  "dependencies": {
+    "ws": "^8.21.1"
+  }
+}

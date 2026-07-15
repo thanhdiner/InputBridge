@@ -86,7 +86,7 @@
       const sourceTrackActivated = activateYouTubeCaptionTrack(
         player,
         renderer,
-        sourceTrack.languageCode,
+        sourceTrack,
         useCustomTranslation || preferSourceTrack ? sourceTrack.languageCode : targetLanguageCode
       );
       const playerTrackShowsTranslation = Boolean(sourceTrackActivated && !useCustomTranslation && !preferSourceTrack);
@@ -159,21 +159,34 @@
     return normalizeCaptionEvents(payload?.events || []);
   }
 
-  function activateYouTubeCaptionTrack(player, renderer, sourceLanguageCode, targetLanguageCode) {
-    if (!player || !targetLanguageCode) return false;
+  function activateYouTubeCaptionTrack(player, renderer, requestedSourceTrack, targetLanguageCode) {
+    if (!player || !requestedSourceTrack?.languageCode || !targetLanguageCode) return false;
 
     try {
       const playerTracks = player.getOption?.("captions", "tracklist") || [];
+      const audioTrack = player.getAudioTrack?.() || null;
+      const audioCaptionTracks = Array.isArray(audioTrack?.captionTracks) ? audioTrack.captionTracks : [];
+      const rendererTracks = Array.isArray(renderer?.captionTracks) ? renderer.captionTracks : [];
+      const allTracks = [...audioCaptionTracks, ...playerTracks, ...rendererTracks];
       const currentTrack = player.getOption?.("captions", "track") || null;
-      const sourceTrack = playerTracks.find((track) =>
+      const sourceLanguageCode = requestedSourceTrack.languageCode;
+      const requestedVssId = requestedSourceTrack.vssId || requestedSourceTrack.vss_id || "";
+      const sourceTrack = allTracks.find((track) => {
+        const vssId = track?.vssId || track?.vss_id || "";
+        return requestedVssId && vssId === requestedVssId;
+      }) || allTracks.find((track) =>
+        sameLanguageCode(track?.languageCode, sourceLanguageCode)
+        && String(track?.kind || "") === String(requestedSourceTrack?.kind || "")
+        && !track?.translationLanguage
+      ) || allTracks.find((track) =>
         sameLanguageCode(track?.languageCode, sourceLanguageCode) && !track?.translationLanguage
-      ) || playerTracks.find((track) =>
+      ) || allTracks.find((track) =>
         sameLanguageCode(track?.languageCode, currentTrack?.languageCode) && !track?.translationLanguage
-      ) || playerTracks.find((track) => track?.is_translateable !== false) || playerTracks[0];
+      ) || allTracks.find((track) => track?.is_translateable !== false) || allTracks[0];
       if (!sourceTrack) return false;
 
       if (sameLanguageCode(sourceTrack.languageCode, targetLanguageCode)) {
-        player.setOption?.("captions", "track", sourceTrack);
+        player.setOption?.("captions", "track", { ...sourceTrack, translationLanguage: null });
         return true;
       }
 
@@ -196,9 +209,9 @@
         return true;
       }
 
-      const directTrack = playerTracks.find((track) => sameLanguageCode(track?.languageCode, targetLanguageCode));
+      const directTrack = allTracks.find((track) => sameLanguageCode(track?.languageCode, targetLanguageCode));
       if (!directTrack) return false;
-      player.setOption?.("captions", "track", directTrack);
+      player.setOption?.("captions", "track", { ...directTrack, translationLanguage: null });
       return true;
     } catch {
       return false;

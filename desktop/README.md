@@ -1,0 +1,56 @@
+# InputBridge Desktop
+
+Ứng dụng Windows chụp một vùng màn hình, nhận dạng chữ bằng Windows OCR và dịch bằng pipeline Google Translate của InputBridge.
+
+## Chạy khi phát triển
+
+Yêu cầu:
+
+- Windows 10 19041 trở lên
+- Node.js 20 trở lên
+- .NET 8 SDK
+
+```powershell
+cd "F:\All Project\_Đang build\InputBridge Extension\desktop"
+npm install
+npm start
+```
+
+## Cách dùng
+
+1. Chọn ngôn ngữ nguồn và ngôn ngữ đích.
+2. Dùng `Ctrl + Shift + X` hoặc bấm vào ô **Phím tắt** để ghi một tổ hợp khác.
+3. Nhấn phím tắt hoặc nút **Chọn vùng để dịch**.
+4. Chọn mode trên thanh top của overlay:
+   - **Văn bản**: gom OCR thành bản gốc và bản dịch trong popup.
+   - **Trong ảnh**: dịch theo từng dòng, giữ tọa độ và vẽ bản dịch lên ảnh.
+5. Kéo chọn sát vùng chữ và chờ kết quả xuất hiện cạnh vùng đã chọn.
+
+Mode cuối cùng được lưu và dùng lại ở lần chụp sau. Kết quả **Trong ảnh** có thể sao chép thẳng vào clipboard dưới dạng PNG.
+
+Nút đỏ chỉ ẩn cửa sổ xuống system tray để global hotkey tiếp tục chạy. Bấm icon InputBridge ở tray để mở lại; chọn **Thoát hẳn** trong menu tray khi muốn tắt app hoàn toàn.
+
+`Esc` hoặc chuột phải sẽ hủy chế độ chọn vùng.
+
+## Build bản portable
+
+```powershell
+npm run dist
+```
+
+File chạy được tạo trong `desktop/dist/`.
+
+## Kiến trúc
+
+- `main.js`: capture, global hotkey, crop ảnh, quản lý cửa sổ và IPC.
+- `native/OcrHelper`: helper .NET 8 dùng `Windows.Media.Ocr`.
+- `src/translation.js`: Google Translate, cache và chunking tối đa 20.000 ký tự.
+- `renderer/`: cửa sổ kính sáng kiểu macOS, cấu hình ngôn ngữ và ghi global hotkey.
+- `selection/`: overlay chọn vùng và segmented control chọn mode.
+- `result/`: popup text hoặc canvas ảnh dịch giữ bố cục.
+
+## Giới hạn hiện tại
+
+- OCR phụ thuộc language pack đã cài trong Windows. Chọn rõ ngôn ngữ nguồn sẽ chính xác hơn chế độ Auto.
+- Một số video DRM hoặc game exclusive fullscreen có thể trả ảnh đen. Chuyển sang borderless hoặc windowed mode.
+- Bản đầu chưa có chế độ ghim vùng và dịch liên tục.

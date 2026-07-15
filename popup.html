@@ -265,7 +265,7 @@
             </label>
             <label class="field">
               <span data-i18n="settings-max-chars-label">Maximum characters</span>
-              <input id="selectionMaxChars" type="number" min="20" max="5000" step="50" />
+              <input id="selectionMaxChars" type="number" min="20" max="20000" step="100" />
             </label>
           </div>
           <div class="settings-list separated">
@@ -291,8 +291,16 @@
               <span class="switch"><input id="videoSubtitleEnabled" type="checkbox" /><span></span></span>
             </label>
             <label class="setting-row compact-row">
-              <span><strong data-i18n="settings-video-bilingual">Hiển thị song ngữ</strong><small data-i18n="settings-video-bilingual-desc">Hiện câu gốc phía trên bản dịch.</small></span>
-              <span class="switch"><input id="videoSubtitleBilingual" type="checkbox" /><span></span></span>
+              <span><strong>Hiện phụ đề gốc</strong><small>Bật hoặc ẩn riêng dòng ngôn ngữ nguồn.</small></span>
+              <span class="switch"><input id="videoSubtitleShowSource" type="checkbox" /><span></span></span>
+            </label>
+            <label class="setting-row compact-row">
+              <span><strong>Hiện phụ đề dịch</strong><small>Bật hoặc ẩn riêng dòng bản dịch.</small></span>
+              <span class="switch"><input id="videoSubtitleShowTranslation" type="checkbox" /><span></span></span>
+            </label>
+            <label class="setting-row compact-row">
+              <span><strong>Đọc bản dịch</strong><small>Đọc theo timestamp, tự hủy câu cũ khi tua hoặc đổi tốc độ video.</small></span>
+              <span class="switch"><input id="videoDubbingEnabled" type="checkbox" /><span></span></span>
             </label>
           </div>
           <div class="form-grid separated">
@@ -306,6 +314,21 @@
             <label class="field wide">
               <span data-i18n="settings-video-target">Ngôn ngữ đích</span>
               <select id="videoSubtitleTargetLanguage" aria-label="Video subtitle target language"></select>
+            </label>
+            <label class="field wide">
+              <span>Âm thanh gốc khi đọc</span>
+              <select id="videoDubbingOriginalVolume">
+                <option value="0">Tắt tiếng gốc</option>
+                <option value="0.2">Tiếng gốc 20%</option>
+                <option value="0.4">Tiếng gốc 40%</option>
+                <option value="1">Giữ nguyên tiếng gốc</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Giọng đọc Edge</span>
+              <select id="videoDubbingVoice" aria-label="Giọng đọc bản dịch">
+                <option value="">Đang tải giọng Edge...</option>
+              </select>
             </label>
             <label class="field">
               <span data-i18n="settings-video-position">Vị trí</span>

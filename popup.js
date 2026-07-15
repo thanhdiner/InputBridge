@@ -1,5 +1,5 @@
 const DEFAULT_SETTINGS = {
-  settingsVersion: 19,
+  settingsVersion: 24,
   enabled: true,
   demoMode: false,
   engine: "google",
@@ -27,11 +27,16 @@ const DEFAULT_SETTINGS = {
   selectionShiftTranslate: true,
   selectionAllowEditable: false,
   selectionMinChars: 2,
-  selectionMaxChars: 1000,
+  selectionMaxChars: 20000,
   selectionCardTheme: "light",
   videoSubtitleEnabled: false,
   videoSubtitleBilingual: false,
+  videoSubtitleShowSource: false,
+  videoSubtitleShowTranslation: true,
   videoSubtitleKeepOriginal: false,
+  videoDubbingEnabled: false,
+  videoDubbingOriginalVolume: 0.2,
+  videoDubbingVoiceByLanguage: {},
   videoSubtitleSourceLanguage: "auto",
   videoSubtitleTargetLanguage: "Vietnamese",
   videoSubtitleEngine: "google",
@@ -104,7 +109,10 @@ const fields = [
   "selectionMinChars",
   "selectionMaxChars",
   "videoSubtitleEnabled",
-  "videoSubtitleBilingual",
+  "videoSubtitleShowSource",
+  "videoSubtitleShowTranslation",
+  "videoDubbingEnabled",
+  "videoDubbingOriginalVolume",
   "videoSubtitleTargetLanguage",
   "videoSubtitleEngine",
   "videoSubtitlePosition",
@@ -127,6 +135,8 @@ const fields = [
   "videoSubtitleTranslationOutline"
 ];
 const quickFields = new Set(["enabled", "sourceLanguage", "targetLanguage"]);
+const videoDubbingVoicesByLanguage = new Map();
+const videoDubbingVoiceRequests = new Map();
 const VIDEO_SUBTITLE_POSITION_STORAGE_KEY = "videoSubtitlePositionsByOrigin";
 const VIDEO_SUBTITLE_STYLE_FIELD_IDS = Object.freeze([
   "videoSubtitleSourceFontSize",
@@ -422,6 +432,29 @@ function bindEvents() {
     await notifyTabs();
     render();
   });
+  $("videoSubtitleTargetLanguage")?.addEventListener("change", () => {
+    settings.videoSubtitleTargetLanguage = $("videoSubtitleTargetLanguage").value || "Vietnamese";
+    renderPopupVideoDubbingVoiceSelect();
+  });
+  $("videoDubbingEnabled")?.addEventListener("change", () => {
+    settings.videoDubbingEnabled = Boolean($("videoDubbingEnabled").checked);
+    renderPopupVideoDubbingVoiceSelect();
+  });
+  $("videoDubbingVoice")?.addEventListener("change", async () => {
+    const languageKey = getPopupVideoDubbingLanguageKey();
+    const nextMap = {
+      ...(settings.videoDubbingVoiceByLanguage && typeof settings.videoDubbingVoiceByLanguage === "object"
+        ? settings.videoDubbingVoiceByLanguage
+        : {})
+    };
+    const voice = String($("videoDubbingVoice").value || "").trim();
+    if (voice) nextMap[languageKey] = voice;
+    else delete nextMap[languageKey];
+    settings.videoDubbingVoiceByLanguage = nextMap;
+    await chrome.storage.sync.set({ videoDubbingVoiceByLanguage: nextMap });
+    await notifyTabs();
+    setStatus(voice ? `Đã chọn giọng ${voice}.` : "Đã dùng giọng tự động.");
+  });
   $("llmProvider").addEventListener("change", () => updateLlmProviderUi(true));
   document.querySelectorAll(".api-key-slot").forEach((input) => {
     input.addEventListener("input", syncApiKeyFieldFromSlots);
@@ -526,6 +559,78 @@ function updateToolUi() {
   if (!inputVal) clearPopupResult();
 }
 
+function getPopupVideoDubbingLanguageKey() {
+  const code = LANGUAGE_CATALOG?.codeFor(settings.videoSubtitleTargetLanguage || "Vietnamese", "en") || "en";
+  return String(code).trim().toLowerCase().replace(/_/g, "-");
+}
+
+function getPopupSelectedVideoDubbingVoice() {
+  const map = settings.videoDubbingVoiceByLanguage;
+  if (!map || typeof map !== "object" || Array.isArray(map)) return "";
+  const languageKey = getPopupVideoDubbingLanguageKey();
+  return String(map[languageKey] || map[languageKey.split("-")[0]] || "").trim();
+}
+
+function getPopupVideoDubbingVoiceLabel(voice) {
+  const name = String(voice?.localName || voice?.friendlyName || voice?.name || "").trim();
+  const gender = String(voice?.gender || "").toLowerCase();
+  const genderLabel = gender === "female" ? "Nữ" : gender === "male" ? "Nam" : "";
+  return genderLabel ? `${name} · ${genderLabel}` : name;
+}
+
+async function ensurePopupVideoDubbingVoices(languageKey = getPopupVideoDubbingLanguageKey()) {
+  const key = String(languageKey || "en").toLowerCase().replace(/_/g, "-");
+  if (videoDubbingVoicesByLanguage.has(key)) return videoDubbingVoicesByLanguage.get(key);
+  const pending = videoDubbingVoiceRequests.get(key);
+  if (pending) return pending;
+  const request = chrome.runtime.sendMessage({
+    type: "IB_VIDEO_DUBBING_VOICES",
+    language: key,
+    origin: activeOrigin || ""
+  }).then((response) => {
+    const voices = Array.isArray(response?.data?.voices) ? response.data.voices : [];
+    videoDubbingVoicesByLanguage.set(key, voices);
+    return voices;
+  }).catch(() => {
+    videoDubbingVoicesByLanguage.set(key, []);
+    return [];
+  }).finally(() => {
+    videoDubbingVoiceRequests.delete(key);
+    renderPopupVideoDubbingVoiceSelect();
+  });
+  videoDubbingVoiceRequests.set(key, request);
+  return request;
+}
+
+function renderPopupVideoDubbingVoiceSelect() {
+  const select = $("videoDubbingVoice");
+  if (!select) return;
+  const languageKey = getPopupVideoDubbingLanguageKey();
+  const selectedVoice = getPopupSelectedVideoDubbingVoice();
+  const voices = videoDubbingVoicesByLanguage.get(languageKey);
+  const fragment = document.createDocumentFragment();
+  const autoOption = document.createElement("option");
+  autoOption.value = "";
+  autoOption.textContent = voices ? "Tự động · Edge/System" : "Đang tải giọng Edge...";
+  fragment.appendChild(autoOption);
+  for (const voice of voices || []) {
+    const option = document.createElement("option");
+    option.value = voice.name;
+    option.textContent = getPopupVideoDubbingVoiceLabel(voice);
+    fragment.appendChild(option);
+  }
+  if (selectedVoice && !(voices || []).some((voice) => voice.name === selectedVoice)) {
+    const option = document.createElement("option");
+    option.value = selectedVoice;
+    option.textContent = selectedVoice;
+    fragment.appendChild(option);
+  }
+  select.replaceChildren(fragment);
+  select.value = selectedVoice;
+  select.disabled = !Boolean(settings.videoDubbingEnabled);
+  if (!voices) void ensurePopupVideoDubbingVoices(languageKey);
+}
+
 function render() {
   for (const id of fields) {
     const el = $(id);
@@ -562,6 +667,7 @@ function render() {
     : "video-subtitle-btn-on");
   $("toggleVideoSubtitles").classList.toggle("is-disabled", videoEnabled);
 
+  renderPopupVideoDubbingVoiceSelect();
   localizeUI();
   updateVideoSubtitleStylePreview();
   updateLlmProviderUi();
@@ -1150,7 +1256,8 @@ function collectSettings() {
   next.debounceMs = clamp(next.debounceMs || DEFAULT_SETTINGS.debounceMs, 300, 2500);
   next.minChars = clamp(next.minChars || DEFAULT_SETTINGS.minChars, 1, 200);
   next.selectionMinChars = clamp(next.selectionMinChars || DEFAULT_SETTINGS.selectionMinChars, 1, 20);
-  next.selectionMaxChars = clamp(next.selectionMaxChars || DEFAULT_SETTINGS.selectionMaxChars, 20, 5000);
+  next.selectionMaxChars = clamp(next.selectionMaxChars || DEFAULT_SETTINGS.selectionMaxChars, 20, 20000);
+  next.videoDubbingOriginalVolume = clamp(Number(next.videoDubbingOriginalVolume ?? DEFAULT_SETTINGS.videoDubbingOriginalVolume), 0, 1);
   next.videoSubtitleSourceFontSize = clamp(Number(next.videoSubtitleSourceFontSize || DEFAULT_SETTINGS.videoSubtitleSourceFontSize), 14, 42);
   next.videoSubtitleTranslationFontSize = clamp(Number(next.videoSubtitleTranslationFontSize || DEFAULT_SETTINGS.videoSubtitleTranslationFontSize), 14, 42);
   next.videoSubtitleSourceFontWeight = clamp(Number(next.videoSubtitleSourceFontWeight || DEFAULT_SETTINGS.videoSubtitleSourceFontWeight), 400, 800);
@@ -1172,6 +1279,9 @@ function collectSettings() {
   ]) {
     if (!/^#[0-9a-f]{6}$/i.test(String(next[key] || ""))) next[key] = DEFAULT_SETTINGS[key];
   }
+  next.videoSubtitleBilingual = Boolean(
+    next.videoSubtitleShowSource && next.videoSubtitleShowTranslation
+  );
   next.videoSubtitleEngine = ["google", "gemini"].includes(next.videoSubtitleEngine)
     ? next.videoSubtitleEngine
     : DEFAULT_SETTINGS.videoSubtitleEngine;
@@ -1196,6 +1306,15 @@ async function loadSettings() {
     stored.aiEnhance === true &&
     !parseApiKeys(stored.apiKey).length;
   const upgradeVideoSubtitleStyle = Number(stored.settingsVersion || 0) < 19;
+  const upgradeSelectionMaxChars =
+    Number(stored.settingsVersion || 0) < 22 &&
+    [1000, 5000].includes(Number(stored.selectionMaxChars || 5000));
+  const videoSubtitleShowSource = Boolean(
+    stored.videoSubtitleShowSource ?? stored.videoSubtitleBilingual ?? false
+  );
+  const videoSubtitleShowTranslation = Boolean(
+    stored.videoSubtitleShowTranslation ?? true
+  );
   const migrated = needsMigration
     ? {
         ...stored,
@@ -1208,7 +1327,7 @@ async function loadSettings() {
         selectionShiftTranslate: stored.selectionShiftTranslate ?? true,
         selectionAllowEditable: stored.selectionAllowEditable ?? false,
         selectionMinChars: Number(stored.selectionMinChars || 2),
-        selectionMaxChars: Number(stored.selectionMaxChars || 1000),
+        selectionMaxChars: upgradeSelectionMaxChars ? 20000 : Number(stored.selectionMaxChars || 20000),
         selectionCardTheme: stored.selectionCardTheme || "light",
         llmProvider: stored.llmProvider || "9router",
         llmBaseUrl: stored.llmBaseUrl || "http://localhost:20128/v1",
@@ -1218,8 +1337,15 @@ async function loadSettings() {
         writeTargetLanguage: stored.writeTargetLanguage || "English",
         uiLanguage: stored.uiLanguage || "vi",
         videoSubtitleEnabled: stored.videoSubtitleEnabled ?? false,
-        videoSubtitleBilingual: stored.videoSubtitleBilingual ?? false,
+        videoSubtitleBilingual: videoSubtitleShowSource && videoSubtitleShowTranslation,
+        videoSubtitleShowSource,
+        videoSubtitleShowTranslation,
         videoSubtitleKeepOriginal: false,
+        videoDubbingEnabled: stored.videoDubbingEnabled ?? false,
+        videoDubbingOriginalVolume: Number(stored.videoDubbingOriginalVolume ?? 0.2),
+        videoDubbingVoiceByLanguage: stored.videoDubbingVoiceByLanguage && typeof stored.videoDubbingVoiceByLanguage === "object"
+          ? stored.videoDubbingVoiceByLanguage
+          : {},
         videoSubtitleSourceLanguage: stored.videoSubtitleSourceLanguage || "auto",
         videoSubtitleTargetLanguage: stored.videoSubtitleTargetLanguage || "Vietnamese",
         videoSubtitleEngine: stored.videoSubtitleEngine === "gemini" ? "gemini" : "google",
