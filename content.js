@@ -595,17 +595,20 @@
         videoElementBindings.add(video);
         video.addEventListener("seeking", () => {
           if (video !== getPrimaryVideo() && video !== videoDubbingVideo) return;
+          const dubbingSessionWasRequested = isVideoDubbingSessionRequested();
           const shouldResumeAfterAlignmentSeek = Boolean(
             videoDubbingResumeAfterSeekVideo === video
             || (
-              videoDubbingSessionWasPlaying
+              dubbingSessionWasRequested
               && (
-                video === videoDubbingAlignmentHoldVideo
-                || (video.paused && videoDubbingSessionState === "running")
+                videoDubbingSessionWasPlaying
+                || !video.paused
+                || video === videoDubbingAlignmentHoldVideo
+                || videoDubbingSessionState === "running"
               )
             )
           );
-          if (isVideoDubbingSessionRequested()) {
+          if (dubbingSessionWasRequested) {
             stopVideoDubbingSession({ resumeOriginal: false });
           }
           videoDubbingConsumedCueKeys.clear();
@@ -630,7 +633,7 @@
           scheduleVideoCaptionRead(0);
           syncVideoDubbing("seeked");
           if (shouldResumeAfterAlignmentSeek) {
-            void resumeOriginalVideoAfterDubbingStop(video, true);
+            void startVideoDubbingSession({ resumePlayback: true });
           }
         });
         video.addEventListener("loadedmetadata", () => {
@@ -1230,7 +1233,7 @@
     void resumeOriginalVideoAfterDubbingStop(video, shouldResume);
   }
 
-  async function startVideoDubbingSession() {
+  async function startVideoDubbingSession({ resumePlayback = null } = {}) {
     if (!settings.enabled) {
       setVideoDubbingSessionState("error", "InputBridge đang tắt");
       showToast("Hãy bật InputBridge trước khi lồng tiếng");
@@ -1245,7 +1248,9 @@
     videoDubbingResumeAfterSeekVideo = null;
     resetVideoDubbingAlignmentPauseIntent();
 
-    const wasPlaying = !video.paused && !video.ended;
+    const wasPlaying = resumePlayback === null
+      ? !video.paused && !video.ended
+      : Boolean(resumePlayback && !video.ended);
     // Pause synchronously in the click task. No translation or TTS request may
     // race ahead of the video while preparation is still incomplete.
     try { video.pause(); } catch {}
