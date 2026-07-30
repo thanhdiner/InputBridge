@@ -35,8 +35,8 @@ Hoặc test luôn trên web bình thường như Gmail, Messenger web, Discord w
 
 ## Auto behavior
 
-- `Preview only`: chỉ hiện preview, bấm Apply hoặc Tab để nhận.
-- `Auto replace sau khi ngừng gõ`: tự thay nội dung sau khi user dừng gõ.
+- `Bấm Apply thủ công` (mặc định): chỉ hiện preview, bấm Apply hoặc Tab để nhận.
+- `Tự động Apply sau khi ngừng gõ`: tự thay nội dung sau khi user dừng gõ.
 - `Auto on Send thử nghiệm`: bắt Enter, đổi câu rồi thử click nút gửi gần nhất. Cái này chưa thể đảm bảo 100% vì mỗi web xử lý send khác nhau.
 
 ## Dịch văn bản được bôi đen

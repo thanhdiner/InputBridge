@@ -151,6 +151,16 @@
             <select id="videoSubtitleQuickLanguage" aria-label="Ngôn ngữ phụ đề video"></select>
             <button id="toggleVideoSubtitles" class="site-action" type="button">Bật phụ đề</button>
           </div>
+          <button
+            id="toggleCurrentVideoSubtitles"
+            class="video-current-session-action"
+            type="button"
+            title="Chỉ áp dụng trong tab hiện tại và không lưu"
+            hidden
+          >
+            <span>Tắt riêng video này</span>
+            <small data-i18n="video-subtitle-current-note">Phiên hiện tại · không lưu</small>
+          </button>
         </section>
       </section>
 
@@ -204,11 +214,11 @@
               </select>
             </label>
             <label class="field">
-              <span data-i18n="settings-auto-label">Auto behavior</span>
+              <span data-i18n="settings-auto-label">Cách áp dụng kết quả</span>
               <select id="autoMode">
-                <option value="preview" data-i18n="settings-auto-preview">Preview only</option>
-                <option value="autoReplace" data-i18n="settings-auto-replace">Auto replace sau khi ngừng gõ</option>
-                <option value="autoOnSend" data-i18n="settings-auto-onsend">Auto on Send thử nghiệm</option>
+                <option value="preview" data-i18n="settings-auto-preview">Bấm Apply thủ công (mặc định)</option>
+                <option value="autoReplace" data-i18n="settings-auto-replace">Tự động Apply sau khi ngừng gõ</option>
+                <option value="autoOnSend" data-i18n="settings-auto-onsend">Tự động dịch khi gửi (Thử nghiệm)</option>
               </select>
             </label>
           </div>
