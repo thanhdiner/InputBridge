@@ -1,5 +1,5 @@
 const DEFAULT_SETTINGS = {
-  settingsVersion: 24,
+  settingsVersion: 26,
   enabled: true,
   demoMode: false,
   engine: "google",
@@ -15,7 +15,7 @@ const DEFAULT_SETTINGS = {
   uiLanguage: "vi",
   mode: "translate",
   tone: "natural",
-  autoMode: "autoOnSend",
+  autoMode: "preview",
   livePreview: true,
   debounceMs: 700,
   minChars: 1,
@@ -44,7 +44,7 @@ const DEFAULT_SETTINGS = {
   videoSubtitleSyncOffsetMs: -450,
   videoSubtitleFontSize: 22,
   videoSubtitleSourceFontSize: 30,
-  videoSubtitleTranslationFontSize: 28,
+  videoSubtitleTranslationFontSize: 26,
   videoSubtitleSourceColor: "#ffffff",
   videoSubtitleTranslationColor: "#ffe37a",
   videoSubtitleSourceBackground: "#000000",
@@ -161,7 +161,7 @@ const VIDEO_SUBTITLE_STYLE_PRESETS = Object.freeze({
     label: "Anime",
     values: Object.freeze({
       videoSubtitleSourceFontSize: 30,
-      videoSubtitleTranslationFontSize: 28,
+      videoSubtitleTranslationFontSize: 26,
       videoSubtitleSourceColor: "#ffffff",
       videoSubtitleTranslationColor: "#ffe37a",
       videoSubtitleSourceBackground: "#000000",
@@ -231,6 +231,14 @@ let popupDebounceTimer = null;
 let lastPopupResult = "";
 let lastDetectedSourceLanguage = "";
 let popupInputTouched = false;
+let currentVideoSubtitleSession = {
+  available: false,
+  temporarilyDisabled: false,
+  globallyEnabled: false,
+  requiresNativeCaptions: false,
+  nativeCaptionsEnabled: true,
+  effectiveEnabled: false
+};
 const customSelects = new Map();
 
 function parseApiKeys(value) {
@@ -276,6 +284,7 @@ init();
 async function init() {
   settings = await loadSettings();
   activeOrigin = await getActiveOrigin();
+  currentVideoSubtitleSession = await getCurrentVideoSubtitleSession();
   populateLanguageSelects();
   render();
   upgradeSelects();
@@ -345,6 +354,7 @@ function bindEvents() {
   $("reset").addEventListener("click", reset);
   $("toggleSite").addEventListener("click", toggleCurrentSite);
   $("toggleVideoSubtitles").addEventListener("click", toggleVideoSubtitles);
+  $("toggleCurrentVideoSubtitles")?.addEventListener("click", toggleCurrentVideoSubtitles);
   $("resetVideoSubtitlePositions")?.addEventListener("click", resetVideoSubtitlePositions);
 
   // Tab-specific actions
@@ -690,6 +700,32 @@ function render() {
     ? "video-subtitle-btn-off"
     : "video-subtitle-btn-on");
   $("toggleVideoSubtitles").classList.toggle("is-disabled", videoEnabled);
+  const currentVideoToggle = $("toggleCurrentVideoSubtitles");
+  const currentVideoTemporarilyDisabled = Boolean(currentVideoSubtitleSession.temporarilyDisabled);
+  const waitingForNativeCaptions = Boolean(
+    videoEnabled
+    && currentVideoSubtitleSession.available
+    && currentVideoSubtitleSession.requiresNativeCaptions
+    && !currentVideoSubtitleSession.nativeCaptionsEnabled
+  );
+  if (currentVideoToggle) {
+    currentVideoToggle.hidden = !currentVideoSubtitleSession.available;
+    currentVideoToggle.disabled = !videoEnabled || waitingForNativeCaptions;
+    currentVideoToggle.classList.toggle("is-active", currentVideoTemporarilyDisabled);
+    currentVideoToggle.setAttribute("aria-pressed", String(currentVideoTemporarilyDisabled));
+    const label = currentVideoToggle.querySelector("span");
+    if (label) {
+      label.textContent = getTranslation(currentVideoTemporarilyDisabled
+        ? "video-subtitle-current-on"
+        : "video-subtitle-current-off");
+      currentVideoToggle.setAttribute("aria-label", label.textContent);
+    }
+  }
+  if (currentVideoTemporarilyDisabled) {
+    $("videoSubtitleStatus").textContent = getTranslation("video-subtitle-current-status-off");
+  } else if (waitingForNativeCaptions) {
+    $("videoSubtitleStatus").textContent = getTranslation("video-subtitle-youtube-cc-off");
+  }
 
   renderPopupVideoDubbingVoiceSelect();
   localizeUI();
@@ -1266,6 +1302,19 @@ async function toggleVideoSubtitles() {
   setStatus(getTranslation(nextEnabled ? "status-video-on" : "status-video-off"));
 }
 
+async function toggleCurrentVideoSubtitles() {
+  const response = await sendActiveTabMessage({ type: "IB_TOGGLE_CURRENT_VIDEO_SUBTITLES" });
+  if (!response?.ok || !response.data) {
+    setStatus(getTranslation("status-video-current-unavailable"));
+    return;
+  }
+  currentVideoSubtitleSession = response.data;
+  render();
+  setStatus(getTranslation(currentVideoSubtitleSession.temporarilyDisabled
+    ? "status-video-current-off"
+    : "status-video-current-on"));
+}
+
 function collectSettings() {
   syncApiKeyFieldFromSlots();
   const next = {};
@@ -1330,6 +1379,9 @@ async function loadSettings() {
     stored.aiEnhance === true &&
     !parseApiKeys(stored.apiKey).length;
   const upgradeVideoSubtitleStyle = Number(stored.settingsVersion || 0) < 19;
+  const upgradeVideoSubtitleCompactLayout =
+    Number(stored.settingsVersion || 0) < 25 &&
+    Number(stored.videoSubtitleTranslationFontSize || 28) === 28;
   const upgradeSelectionMaxChars =
     Number(stored.settingsVersion || 0) < 22 &&
     [1000, 5000].includes(Number(stored.selectionMaxChars || 5000));
@@ -1345,7 +1397,9 @@ async function loadSettings() {
         settingsVersion: DEFAULT_SETTINGS.settingsVersion,
         minChars: 1,
         demoMode: false,
-        autoMode: "autoOnSend",
+        autoMode: ["preview", "autoReplace"].includes(stored.autoMode)
+          ? stored.autoMode
+          : "preview",
         selectionTranslation: stored.selectionTranslation ?? true,
         selectionTrigger: stored.selectionTrigger || "icon",
         selectionShiftTranslate: stored.selectionShiftTranslate ?? true,
@@ -1377,7 +1431,9 @@ async function loadSettings() {
         videoSubtitleSyncOffsetMs: Number(stored.videoSubtitleSyncOffsetMs ?? -450),
         videoSubtitleFontSize: Number(stored.videoSubtitleFontSize || 22),
         videoSubtitleSourceFontSize: upgradeVideoSubtitleStyle ? 30 : Number(stored.videoSubtitleSourceFontSize || 30),
-        videoSubtitleTranslationFontSize: upgradeVideoSubtitleStyle ? 28 : Number(stored.videoSubtitleTranslationFontSize || 28),
+        videoSubtitleTranslationFontSize: upgradeVideoSubtitleStyle || upgradeVideoSubtitleCompactLayout
+          ? 26
+          : Number(stored.videoSubtitleTranslationFontSize || 26),
         videoSubtitleSourceColor: upgradeVideoSubtitleStyle ? "#ffffff" : (/^#[0-9a-f]{6}$/i.test(stored.videoSubtitleSourceColor || "") ? stored.videoSubtitleSourceColor : "#ffffff"),
         videoSubtitleTranslationColor: upgradeVideoSubtitleStyle ? "#ffe37a" : (/^#[0-9a-f]{6}$/i.test(stored.videoSubtitleTranslationColor || "") ? stored.videoSubtitleTranslationColor : "#ffe37a"),
         videoSubtitleSourceBackground: upgradeVideoSubtitleStyle ? "#000000" : (/^#[0-9a-f]{6}$/i.test(stored.videoSubtitleSourceBackground || "") ? stored.videoSubtitleSourceBackground : "#000000"),
@@ -1409,6 +1465,26 @@ async function getActiveOrigin() {
   } catch {
     return "";
   }
+}
+
+async function sendActiveTabMessage(message) {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id || !tab.url?.startsWith("http")) return null;
+  return chrome.tabs.sendMessage(tab.id, message).catch(() => null);
+}
+
+async function getCurrentVideoSubtitleSession() {
+  const response = await sendActiveTabMessage({ type: "IB_GET_CURRENT_VIDEO_SUBTITLE_SESSION" });
+  return response?.ok && response.data
+    ? response.data
+    : {
+        available: false,
+        temporarilyDisabled: false,
+        globallyEnabled: false,
+        requiresNativeCaptions: false,
+        nativeCaptionsEnabled: true,
+        effectiveEnabled: false
+      };
 }
 
 async function notifyTabs() {
@@ -1757,6 +1833,11 @@ const TRANSLATIONS = {
     "video-subtitle-status-off": "Đang tắt",
     "video-subtitle-btn-on": "Bật phụ đề",
     "video-subtitle-btn-off": "Tắt phụ đề",
+    "video-subtitle-current-off": "Tắt riêng video này",
+    "video-subtitle-current-on": "Bật lại phụ đề video này",
+    "video-subtitle-current-note": "Phiên hiện tại · không lưu",
+    "video-subtitle-current-status-off": "Đã tắt riêng video này · không lưu",
+    "video-subtitle-youtube-cc-off": "Hãy bật phụ đề YouTube (CC)",
     
     "settings-eyebrow": "Nâng cao",
     "settings-title": "Cài đặt",
@@ -1767,13 +1848,13 @@ const TRANSLATIONS = {
     "settings-engine-label": "Engine mặc định",
     "settings-ui-lang-label": "Ngôn ngữ hiển thị (UI)",
     "settings-tone-label": "Tone khi bật LLM",
-    "settings-auto-label": "Auto behavior",
+    "settings-auto-label": "Cách áp dụng kết quả",
     "settings-mode-trans": "Gửi dạng ngôn ngữ",
     "settings-mode-polish": "Polish bằng LLM",
     "settings-mode-clarify": "Clarify bằng LLM",
-    "settings-auto-preview": "Chỉ xem trước",
-    "settings-auto-replace": "Tự động thay thế sau khi ngừng gõ",
-    "settings-auto-onsend": "Tự động khi gửi (Thử nghiệm)",
+    "settings-auto-preview": "Bấm Apply thủ công (mặc định)",
+    "settings-auto-replace": "Tự động Apply sau khi ngừng gõ",
+    "settings-auto-onsend": "Tự động dịch khi gửi (Thử nghiệm)",
     
     "settings-group-preview": "Xem trước và gửi",
     "settings-live-label": "Xem trước trực tiếp",
@@ -1854,6 +1935,9 @@ const TRANSLATIONS = {
     "status-site-off": "Đã tắt site này.",
     "status-video-on": "Đã bật dịch phụ đề video.",
     "status-video-off": "Đã tắt dịch phụ đề video.",
+    "status-video-current-off": "Đã tắt phụ đề riêng cho video này trong phiên hiện tại.",
+    "status-video-current-on": "Đã bật lại phụ đề cho video này.",
+    "status-video-current-unavailable": "Không tìm thấy video đang xem.",
     "status-video-position-reset": "Đã đặt lại vị trí phụ đề.",
     "status-error-failed": "Không xử lý được nội dung.",
 
@@ -1906,6 +1990,11 @@ const TRANSLATIONS = {
     "video-subtitle-status-off": "Off",
     "video-subtitle-btn-on": "Enable",
     "video-subtitle-btn-off": "Disable",
+    "video-subtitle-current-off": "Disable for this video",
+    "video-subtitle-current-on": "Re-enable for this video",
+    "video-subtitle-current-note": "Current session · not saved",
+    "video-subtitle-current-status-off": "Disabled for this video · not saved",
+    "video-subtitle-youtube-cc-off": "Turn on YouTube captions (CC)",
     
     "settings-eyebrow": "Advanced",
     "settings-title": "Settings",
@@ -1916,13 +2005,13 @@ const TRANSLATIONS = {
     "settings-engine-label": "Default Engine",
     "settings-ui-lang-label": "Display Language (UI)",
     "settings-tone-label": "Tone when LLM is active",
-    "settings-auto-label": "Auto behavior",
+    "settings-auto-label": "How to apply results",
     "settings-mode-trans": "Send as language",
     "settings-mode-polish": "Polish with LLM",
     "settings-mode-clarify": "Clarify with LLM",
-    "settings-auto-preview": "Preview only",
-    "settings-auto-replace": "Auto replace after typing stops",
-    "settings-auto-onsend": "Auto on Send (Experimental)",
+    "settings-auto-preview": "Manual Apply (default)",
+    "settings-auto-replace": "Auto Apply after typing stops",
+    "settings-auto-onsend": "Auto translate on Send (Experimental)",
     
     "settings-group-preview": "Preview & Send",
     "settings-live-label": "Live preview",
@@ -2003,6 +2092,9 @@ const TRANSLATIONS = {
     "status-site-off": "Site disabled.",
     "status-video-on": "Video subtitle translation enabled.",
     "status-video-off": "Video subtitle translation disabled.",
+    "status-video-current-off": "Subtitles disabled for this video in the current session.",
+    "status-video-current-on": "Subtitles re-enabled for this video.",
+    "status-video-current-unavailable": "No active video found.",
     "status-video-position-reset": "Subtitle positions reset.",
     "status-error-failed": "Failed to process content.",
 

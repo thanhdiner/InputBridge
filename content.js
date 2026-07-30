@@ -46,7 +46,7 @@
     targetLanguage: "English",
     mode: "translate",
     tone: "natural",
-    autoMode: "autoOnSend",
+    autoMode: "preview",
     livePreview: true,
     debounceMs: 700,
     minChars: 1,
@@ -74,7 +74,7 @@
     videoSubtitleSyncOffsetMs: -450,
     videoSubtitleFontSize: 22,
     videoSubtitleSourceFontSize: 30,
-    videoSubtitleTranslationFontSize: 28,
+    videoSubtitleTranslationFontSize: 26,
     videoSubtitleSourceColor: "#ffffff",
     videoSubtitleTranslationColor: "#ffe37a",
     videoSubtitleSourceBackground: "#000000",
@@ -94,7 +94,7 @@
   const VIDEO_SUBTITLE_STYLE_PRESETS = Object.freeze({
     anime: Object.freeze({
       videoSubtitleSourceFontSize: 30,
-      videoSubtitleTranslationFontSize: 28,
+      videoSubtitleTranslationFontSize: 26,
       videoSubtitleSourceColor: "#ffffff",
       videoSubtitleTranslationColor: "#ffe37a",
       videoSubtitleSourceBackground: "#000000",
@@ -256,11 +256,17 @@
   let videoCaptionActiveSourceLanguageCode = "";
   let youtubeVideoControlObserver = null;
   let youtubeVideoControlSyncFrame = 0;
+  let youtubeNativeCaptionStateObserver = null;
+  let youtubeNativeCaptionStateButton = null;
+  let youtubeNativeCaptionStateSyncFrame = 0;
   let youtubeVideoControlButtonEl = null;
   let youtubeVideoDubbingButtonEl = null;
   let youtubeVideoControlPanelEl = null;
   const videoCaptionTranslations = new Map();
   const videoCaptionPending = new Set();
+  const videoSubtitleElementSessionIds = new WeakMap();
+  const videoSubtitleTemporarilyDisabledSessions = new Set();
+  let videoSubtitleElementSessionId = 0;
   let videoDubbingTimer = null;
   let videoDubbingLiveTimer = null;
   let videoDubbingLivePendingCue = null;
@@ -279,9 +285,6 @@
   let videoDubbingToken = 0;
   let videoDubbingVideo = null;
   let videoDubbingSavedVolume = null;
-  let videoDubbingAlignmentHoldVideo = null;
-  let videoDubbingAlignmentHoldGeneration = 0;
-  let videoDubbingAlignmentPauseIntent = null;
   let videoDubbingResumeAfterSeekVideo = null;
   let videoDubbingSessionId = 0;
   let videoDubbingSessionState = "idle";
@@ -290,20 +293,26 @@
   let videoDubbingSessionStatus = "";
   let extensionTornDown = false;
   let videoDubbingSessionStartIndex = -1;
-  let videoDubbingBufferRefillPromise = null;
+  let videoDubbingBackgroundBufferPromise = null;
+  let videoDubbingBackgroundBufferTimer = null;
+  let videoDubbingBackgroundBufferNextCheckAt = 0;
   const videoDubbingConsumedCueKeys = new Set();
   const videoDubbingAudioCache = new Map();
   const videoDubbingAudioRequests = new Map();
+  const videoDubbingAudioReadyWaiters = new Map();
   const videoDubbingAudioFailures = new Map();
+  const videoDubbingTranslationFailures = new Map();
   const videoDubbingVoicesByLanguage = new Map();
   const videoDubbingVoiceRequests = new Map();
-  const VIDEO_DUBBING_AUDIO_CACHE_LIMIT = 24;
-  const VIDEO_DUBBING_INITIAL_BUFFER_SECONDS = 12;
-  const VIDEO_DUBBING_REFILL_BUFFER_SECONDS = 18;
-  const VIDEO_DUBBING_BUFFER_MAX_CUES = 8;
+  const VIDEO_DUBBING_AUDIO_CACHE_LIMIT = 48;
+  const VIDEO_DUBBING_INITIAL_BUFFER_SECONDS = 24;
+  const VIDEO_DUBBING_BACKGROUND_BUFFER_SECONDS = 42;
+  const VIDEO_DUBBING_INITIAL_BUFFER_MAX_CUES = 16;
+  const VIDEO_DUBBING_BACKGROUND_BUFFER_MAX_CUES = 20;
+  const VIDEO_DUBBING_MAX_PLAYBACK_RATE = 4;
   const VIDEO_DUBBING_TIMELINE_TIMEOUT_MS = 6000;
   const VIDEO_DUBBING_TRANSLATION_TIMEOUT_MS = 25000;
-  const VIDEO_DUBBING_AUDIO_BUFFER_TIMEOUT_MS = 30000;
+  const VIDEO_DUBBING_AUDIO_BUFFER_TIMEOUT_MS = 60000;
   const VIDEO_DUBBING_LIVE_MAX_WAIT_MS = 1400;
   const VIDEO_DUBBING_LIVE_QUEUE_LIMIT = 3;
   const VIDEO_PLAYER_CAPTION_INITIAL_COMMIT_MS = 70;
@@ -314,6 +323,8 @@
   const VIDEO_SUBTITLE_VAD_MIN_ENERGY = 0.004;
   const VIDEO_SUBTITLE_LIVE_SYNC_LEAD_WORDS = 2.4;
   const VIDEO_SUBTITLE_POSITION_STORAGE_KEY = "videoSubtitlePositionsByOrigin";
+  const VIDEO_SUBTITLE_POSITION_LAYOUT_VERSION_KEY = "videoSubtitlePositionLayoutVersion";
+  const VIDEO_SUBTITLE_POSITION_LAYOUT_VERSION = 2;
 
   init();
 
@@ -352,14 +363,21 @@
     window.addEventListener("message", onVideoCaptionBridgeMessage);
     document.addEventListener("pointerdown", onYouTubeControlDocumentPointerDown, true);
     document.addEventListener("keydown", onYouTubeControlDocumentKeyDown, true);
+    document.addEventListener("loadedmetadata", onAnyVideoMetadataLoaded, true);
     document.addEventListener("yt-navigate-start", onYouTubeVideoControlNavigation, true);
     document.addEventListener("yt-navigate-finish", onYouTubeVideoControlNavigation, true);
 
-    chrome.runtime.onMessage.addListener((message) => {
+    chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (message?.type === "IB_SETTINGS_UPDATED") refreshSettings("settings-updated");
       if (message?.type === "IB_RESET_VIDEO_SUBTITLE_POSITIONS") {
         videoSubtitleDragPositions = null;
         applyVideoSubtitleItemPositions();
+      }
+      if (message?.type === "IB_GET_CURRENT_VIDEO_SUBTITLE_SESSION") {
+        sendResponse?.({ ok: true, data: getCurrentVideoSubtitleSessionState() });
+      }
+      if (message?.type === "IB_TOGGLE_CURRENT_VIDEO_SUBTITLES") {
+        sendResponse?.({ ok: true, data: toggleCurrentVideoSubtitleTemporaryDisabled() });
       }
     });
 
@@ -463,7 +481,10 @@
       &&
       IS_TOP_FRAME
       && settings.enabled
-      && (settings.videoSubtitleEnabled || isVideoDubbingSessionRequested())
+      && (
+        shouldDisplayCurrentVideoSubtitles()
+        || isVideoDubbingSessionRequested()
+      )
     );
   }
 
@@ -471,14 +492,20 @@
     if (extensionTornDown) return;
     syncYouTubeVideoControl();
     const active = shouldRunVideoSubtitleFeature();
-    setNativeVideoCaptionsHidden(Boolean(settings.videoSubtitleEnabled || isVideoDubbingSessionRequested()));
+    setNativeVideoCaptionsHidden(Boolean(
+      shouldDisplayCurrentVideoSubtitles()
+      || isVideoDubbingSessionRequested()
+    ));
     if (active) startVideoSubtitleFeature();
     else stopVideoSubtitleFeature();
   }
 
   function startVideoSubtitleFeature() {
     if (!IS_TOP_FRAME) return;
-    setNativeVideoCaptionsHidden(Boolean(settings.videoSubtitleEnabled || isVideoDubbingSessionRequested()));
+    setNativeVideoCaptionsHidden(Boolean(
+      shouldDisplayCurrentVideoSubtitles()
+      || isVideoDubbingSessionRequested()
+    ));
 
     if (!videoSubtitleObserver && document.documentElement) {
       videoSubtitleObserver = new MutationObserver(() => {
@@ -510,7 +537,6 @@
 
   function stopVideoSubtitleFeature() {
     videoDubbingResumeAfterSeekVideo = null;
-    resetVideoDubbingAlignmentPauseIntent();
     cancelYouTubeCaptionTimelineRequest();
     videoSubtitleObserver?.disconnect();
     videoSubtitleObserver = null;
@@ -549,8 +575,8 @@
 
   function onVideoSubtitleNavigation() {
     videoDubbingResumeAfterSeekVideo = null;
-    resetVideoDubbingAlignmentPauseIntent();
     if (!shouldRunVideoSubtitleFeature()) return;
+    const needsFeatureRestart = !videoSubtitleObserver;
     videoDubbingConsumedCueKeys.clear();
     resetVideoDubbingLiveState();
     stopVideoDubbing(true);
@@ -570,7 +596,14 @@
     videoPlayerCaptionExpiredText = "";
     videoCaptionTranslations.clear();
     videoCaptionPending.clear();
-    setNativeVideoCaptionsHidden(Boolean(settings.videoSubtitleEnabled || isVideoDubbingSessionRequested()));
+    setNativeVideoCaptionsHidden(Boolean(
+      shouldDisplayCurrentVideoSubtitles()
+      || isVideoDubbingSessionRequested()
+    ));
+    if (needsFeatureRestart) {
+      startVideoSubtitleFeature();
+      return;
+    }
     bindVideoCaptionSources();
     ensureYouTubeVideoControl();
     ensureVideoSubtitleOverlay();
@@ -589,6 +622,11 @@
     ensureVideoSubtitleOverlay(true);
   }
 
+  function onAnyVideoMetadataLoaded(event) {
+    if (!(event.target instanceof HTMLVideoElement)) return;
+    syncVideoSubtitleFeature();
+  }
+
   function bindVideoCaptionSources() {
     document.querySelectorAll("video").forEach((video) => {
       if (!videoElementBindings.has(video)) {
@@ -596,14 +634,13 @@
         video.addEventListener("seeking", () => {
           if (video !== getPrimaryVideo() && video !== videoDubbingVideo) return;
           const dubbingSessionWasRequested = isVideoDubbingSessionRequested();
-          const shouldResumeAfterAlignmentSeek = Boolean(
+          const shouldResumeAfterSeek = Boolean(
             videoDubbingResumeAfterSeekVideo === video
             || (
               dubbingSessionWasRequested
               && (
                 videoDubbingSessionWasPlaying
                 || !video.paused
-                || video === videoDubbingAlignmentHoldVideo
                 || videoDubbingSessionState === "running"
               )
             )
@@ -622,17 +659,17 @@
           hideVideoSubtitleOverlay();
           // stopVideoDubbingSession clears terminal resume intents. Set this
           // one afterwards, and preserve it across repeated seeking events.
-          videoDubbingResumeAfterSeekVideo = shouldResumeAfterAlignmentSeek ? video : null;
+          videoDubbingResumeAfterSeekVideo = shouldResumeAfterSeek ? video : null;
         });
         video.addEventListener("seeked", () => {
-          const shouldResumeAfterAlignmentSeek = video === videoDubbingResumeAfterSeekVideo;
-          if (shouldResumeAfterAlignmentSeek) videoDubbingResumeAfterSeekVideo = null;
+          const shouldResumeAfterSeek = video === videoDubbingResumeAfterSeekVideo;
+          if (shouldResumeAfterSeek) videoDubbingResumeAfterSeekVideo = null;
           resetYouTubeCaptionReader();
           lastVideoCaptionText = "";
           hideVideoSubtitleOverlay();
           scheduleVideoCaptionRead(0);
           syncVideoDubbing("seeked");
-          if (shouldResumeAfterAlignmentSeek) {
+          if (shouldResumeAfterSeek) {
             void startVideoDubbingSession({ resumePlayback: true });
           }
         });
@@ -643,17 +680,10 @@
         });
         video.addEventListener("timeupdate", () => {
           scheduleVideoCaptionRead(0);
+          scheduleVideoDubbingBackgroundBuffer();
           syncVideoDubbing("timeupdate");
         });
         video.addEventListener("playing", () => {
-          if (video === videoDubbingAlignmentHoldVideo) {
-            requestVideoDubbingAlignmentPause(video);
-            return;
-          }
-          // Media pause/play events are ordered, so reaching a real playing
-          // event means any internal alignment pause has been consumed. Avoid
-          // letting a stale marker swallow the user's next genuine pause.
-          clearVideoDubbingAlignmentPauseIntent(video);
           if (video === videoDubbingSessionVideo && isVideoDubbingSessionPreparing()) {
             try { video.pause(); } catch {}
             return;
@@ -663,14 +693,11 @@
           }
           requestYouTubeCaptionTimeline();
           scheduleVideoCaptionRead(0);
+          scheduleVideoDubbingBackgroundBuffer(0, { force: true });
           if (hasPendingVideoDubbingLiveCue()) schedulePendingLiveVideoDubbing(0);
           syncVideoDubbing("playing");
         });
         video.addEventListener("pause", () => {
-          // A long translated sentence can briefly hold the video so its audio
-          // finishes before the next caption starts. This is not a user pause.
-          const internalAlignmentPause = consumeVideoDubbingAlignmentPauseIntent(video);
-          if (video === videoDubbingAlignmentHoldVideo || internalAlignmentPause) return;
           if (video === videoDubbingResumeAfterSeekVideo) {
             if (video.seeking) return;
             videoDubbingResumeAfterSeekVideo = null;
@@ -684,19 +711,11 @@
         });
         video.addEventListener("ratechange", () => {
           if (video !== getPrimaryVideo() && video !== videoDubbingVideo) return;
-          // While alignment is holding the picture, the TTS clock is independent
-          // of the video's rate. Keep the sentence playing and apply the new
-          // video rate when playback resumes instead of restarting the sentence.
-          if (
-            video === videoDubbingAlignmentHoldVideo
-            && (videoDubbingAudio || videoDubbingUtterance)
-          ) return;
           stopVideoDubbing(false);
           syncVideoDubbing("ratechange");
         });
         video.addEventListener("ended", () => {
           if (video === videoDubbingResumeAfterSeekVideo) videoDubbingResumeAfterSeekVideo = null;
-          clearVideoDubbingAlignmentPauseIntent(video);
           if (video !== getPrimaryVideo() && video !== videoDubbingVideo) return;
           if (isVideoDubbingSessionRequested()) stopVideoDubbingSession({ resumeOriginal: false });
           else stopVideoDubbing(true);
@@ -853,6 +872,90 @@
         const rightRect = right.getBoundingClientRect();
         return (rightRect.width * rightRect.height) - (leftRect.width * leftRect.height);
       })[0] || null;
+  }
+
+  function getVideoSubtitleSessionKey(video = getPrimaryVideo()) {
+    if (!video) return "";
+
+    if (/(^|\.)youtube\.com$/i.test(location.hostname)) {
+      const url = new URL(location.href);
+      const pathVideoId = url.pathname.match(/^\/(?:shorts|embed|live)\/([^/?#]+)/i)?.[1] || "";
+      const videoId = url.searchParams.get("v") || pathVideoId;
+      if (videoId) return `youtube:${videoId}`;
+    }
+
+    let elementId = videoSubtitleElementSessionIds.get(video);
+    if (!elementId) {
+      elementId = ++videoSubtitleElementSessionId;
+      videoSubtitleElementSessionIds.set(video, elementId);
+    }
+    const pageKey = `${location.origin}${location.pathname}${location.search}`;
+    const sourceKey = String(video.currentSrc || video.src || "");
+    return `html5:${pageKey}\u0000${elementId}\u0000${sourceKey}`;
+  }
+
+  function getCurrentVideoSubtitleSessionState() {
+    const video = getPrimaryVideo();
+    const sessionKey = getVideoSubtitleSessionKey(video);
+    const temporarilyDisabled = Boolean(
+      sessionKey && videoSubtitleTemporarilyDisabledSessions.has(sessionKey)
+    );
+    const globallyEnabled = Boolean(settings.enabled && settings.videoSubtitleEnabled);
+    const requiresNativeCaptions = isYouTubeVideoPage();
+    const nativeCaptionsEnabled = isCurrentPlayerCaptionTrackEnabled();
+    return {
+      available: Boolean(video && sessionKey),
+      temporarilyDisabled,
+      globallyEnabled,
+      requiresNativeCaptions,
+      nativeCaptionsEnabled,
+      effectiveEnabled: Boolean(globallyEnabled && !temporarilyDisabled && nativeCaptionsEnabled)
+    };
+  }
+
+  function isCurrentVideoSubtitleTemporarilyDisabled() {
+    return getCurrentVideoSubtitleSessionState().temporarilyDisabled;
+  }
+
+  function isCurrentPlayerCaptionTrackEnabled() {
+    if (!isYouTubeVideoPage()) return true;
+    const button = document.querySelector(".html5-video-player .ytp-subtitles-button");
+    if (!button) return false;
+    const pressed = button.getAttribute("aria-pressed");
+    if (pressed !== null) return pressed === "true";
+    return button.classList.contains("ytp-subtitles-button-active");
+  }
+
+  function shouldDisplayCurrentVideoSubtitles() {
+    return Boolean(
+      settings.videoSubtitleEnabled
+      && !isCurrentVideoSubtitleTemporarilyDisabled()
+      && isCurrentPlayerCaptionTrackEnabled()
+    );
+  }
+
+  function toggleCurrentVideoSubtitleTemporaryDisabled() {
+    const video = getPrimaryVideo();
+    const sessionKey = getVideoSubtitleSessionKey(video);
+    if (!sessionKey) return getCurrentVideoSubtitleSessionState();
+
+    const temporarilyDisabled = !videoSubtitleTemporarilyDisabledSessions.has(sessionKey);
+    if (temporarilyDisabled) {
+      if (videoSubtitleTemporarilyDisabledSessions.size >= 32) {
+        const oldestKey = videoSubtitleTemporarilyDisabledSessions.values().next().value;
+        if (oldestKey) videoSubtitleTemporarilyDisabledSessions.delete(oldestKey);
+      }
+      videoSubtitleTemporarilyDisabledSessions.add(sessionKey);
+      videoSubtitleRequestSeq += 1;
+      lastVideoCaptionText = "";
+      hideVideoSubtitleOverlay();
+    } else {
+      videoSubtitleTemporarilyDisabledSessions.delete(sessionKey);
+    }
+
+    syncVideoSubtitleFeature();
+    updateYouTubeVideoControl();
+    return getCurrentVideoSubtitleSessionState();
   }
 
   function getVideoSubtitleSyncOffsetSeconds() {
@@ -1075,12 +1178,17 @@
     });
   }
 
-  function collectVideoDubbingBufferIndices(startIndex, horizonSeconds = VIDEO_DUBBING_INITIAL_BUFFER_SECONDS) {
+  function collectVideoDubbingBufferIndices(
+    startIndex,
+    horizonSeconds = VIDEO_DUBBING_INITIAL_BUFFER_SECONDS,
+    maxCues = VIDEO_DUBBING_INITIAL_BUFFER_MAX_CUES
+  ) {
     const timeline = getVideoDubbingTimeline();
     if (!timeline.length || startIndex < 0) return [];
     const videoTime = getVideoSubtitleLookupTime(videoDubbingSessionVideo?.currentTime || 0);
     const indices = [];
-    for (let index = startIndex; index < timeline.length && indices.length < VIDEO_DUBBING_BUFFER_MAX_CUES; index += 1) {
+    const cueLimit = Math.max(1, Math.min(20, Number(maxCues || VIDEO_DUBBING_INITIAL_BUFFER_MAX_CUES)));
+    for (let index = startIndex; index < timeline.length && indices.length < cueLimit; index += 1) {
       const cue = getVideoDubbingCue(index);
       if (!cue || Number(cue.end || 0) <= videoTime + 0.04) continue;
       indices.push(index);
@@ -1090,12 +1198,26 @@
     return indices;
   }
 
-  async function prepareVideoDubbingTranslations(indices, sessionId) {
+  function isVideoDubbingTranslationBackedOff(index) {
+    const key = getVideoCaptionCueCacheKey(index);
+    const retryAt = Number(videoDubbingTranslationFailures.get(key) || 0);
+    if (!retryAt) return false;
+    if (retryAt <= Date.now()) {
+      videoDubbingTranslationFailures.delete(key);
+      return false;
+    }
+    return true;
+  }
+
+  async function prepareVideoDubbingTranslations(indices, sessionId, { updateStatus = true } = {}) {
     if (!indices.length || videoCaptionTargetMatchesSource()) return;
-    const missing = indices.filter((index) => !getVideoDubbingCue(index)?.text);
+    const missing = indices.filter((index) => (
+      !getVideoDubbingCue(index)?.text
+      && (updateStatus || !isVideoDubbingTranslationBackedOff(index))
+    ));
     if (!missing.length) return;
 
-    setVideoDubbingSessionState("translating", `Đang dịch ${missing.length} câu đầu…`);
+    if (updateStatus) setVideoDubbingSessionState("translating", `Đang dịch ${missing.length} câu đầu…`);
     const items = missing.map((index) => {
       const cue = videoCaptionTimeline[index];
       const id = getVideoCaptionCueCacheKey(index);
@@ -1124,7 +1246,14 @@
               result: item.result,
               engine: item.engine || ""
             });
+            videoDubbingTranslationFailures.delete(item.id);
           }
+        }
+      } catch (error) {
+        if (sessionId !== videoDubbingSessionId) throw new Error("Đã hủy chuẩn bị lồng tiếng");
+        if (updateStatus) throw error;
+        for (const item of items) {
+          videoDubbingTranslationFailures.set(item.id, Date.now() + 5000);
         }
       } finally {
         for (const item of items) videoCaptionPending.delete(item.id);
@@ -1132,40 +1261,138 @@
     }
 
     const unresolved = indices.filter((index) => !getVideoDubbingCue(index)?.text);
-    if (unresolved.length) throw new Error("Không dịch đủ phụ đề để tạo đoạn đệm");
+    if (unresolved.length && updateStatus) throw new Error("Không dịch đủ phụ đề để tạo đoạn đệm");
+    if (!updateStatus) {
+      for (const index of unresolved) {
+        const key = getVideoCaptionCueCacheKey(index);
+        if (key) videoDubbingTranslationFailures.set(key, Date.now() + 5000);
+      }
+    }
   }
 
-  async function prepareVideoDubbingAudioBuffer(indices, sessionId) {
+  async function prepareVideoDubbingAudioBuffer(indices, sessionId, { updateStatus = true } = {}) {
     if (!indices.length) throw new Error("Không tìm thấy câu phụ đề ở vị trí hiện tại");
     let readyCount = 0;
-    setVideoDubbingSessionState("buffering", `Đang tạo giọng đọc 0/${indices.length}…`);
+    if (updateStatus) setVideoDubbingSessionState("buffering", `Đang tạo giọng đọc 0/${indices.length}…`);
     let next = 0;
     const worker = async () => {
       while (next < indices.length) {
+        if (sessionId !== videoDubbingSessionId) throw new Error("Đã hủy chuẩn bị lồng tiếng");
         const index = indices[next];
         next += 1;
         const cue = getVideoDubbingCue(index);
         const cueKey = getVideoDubbingCueKey(cue);
-        if (!cue?.text || !cueKey) throw new Error("Phụ đề chưa sẵn sàng để tạo giọng đọc");
-        await requestVideoDubbingAudio(cue, cueKey, { manualSession: true });
+        if (!cue?.text || !cueKey) {
+          if (updateStatus) throw new Error("Phụ đề chưa sẵn sàng để tạo giọng đọc");
+          continue;
+        }
+        if (!updateStatus && isVideoDubbingAudioFailed(cueKey)) continue;
+        try {
+          await requestVideoDubbingAudio(cue, cueKey, { manualSession: true });
+        } catch (error) {
+          if (sessionId !== videoDubbingSessionId) throw new Error("Đã hủy chuẩn bị lồng tiếng");
+          if (updateStatus) throw error;
+          videoDubbingAudioFailures.set(cueKey, Date.now() + 5000);
+          continue;
+        }
         if (sessionId !== videoDubbingSessionId) throw new Error("Đã hủy chuẩn bị lồng tiếng");
         readyCount += 1;
-        setVideoDubbingSessionState("buffering", `Đang tạo giọng đọc ${readyCount}/${indices.length}…`);
+        if (updateStatus) {
+          setVideoDubbingSessionState("buffering", `Đang tạo giọng đọc ${readyCount}/${indices.length}…`);
+        }
       }
     };
     await Promise.all(Array.from({ length: Math.min(2, indices.length) }, () => worker()));
   }
 
-  async function prepareVideoDubbingBuffer(startIndex, sessionId, horizonSeconds) {
-    const indices = collectVideoDubbingBufferIndices(startIndex, horizonSeconds);
+  async function prepareVideoDubbingBuffer(startIndex, sessionId, horizonSeconds, {
+    maxCues = VIDEO_DUBBING_INITIAL_BUFFER_MAX_CUES,
+    updateStatus = true
+  } = {}) {
+    const indices = collectVideoDubbingBufferIndices(startIndex, horizonSeconds, maxCues);
     if (!indices.length) throw new Error("Không có phụ đề tiếp theo để lồng tiếng");
-    await prepareVideoDubbingTranslations(indices, sessionId);
-    await withVideoDubbingTimeout(
-      prepareVideoDubbingAudioBuffer(indices, sessionId),
-      VIDEO_DUBBING_AUDIO_BUFFER_TIMEOUT_MS,
-      "Tạo giọng đọc quá thời gian"
-    );
+    await prepareVideoDubbingTranslations(indices, sessionId, { updateStatus });
+    const audioBufferTask = prepareVideoDubbingAudioBuffer(indices, sessionId, { updateStatus });
+    if (updateStatus) {
+      await withVideoDubbingTimeout(
+        audioBufferTask,
+        VIDEO_DUBBING_AUDIO_BUFFER_TIMEOUT_MS,
+        "Tạo giọng đọc quá thời gian"
+      );
+    } else {
+      // Each individual provider request already has a bounded timeout. Let the
+      // rolling worker finish so a second refill cannot overlap it after a
+      // foreground-oriented aggregate timeout expires.
+      await audioBufferTask;
+    }
     return indices;
+  }
+
+  function resetVideoDubbingBackgroundBuffer() {
+    if (videoDubbingBackgroundBufferTimer) clearTimeout(videoDubbingBackgroundBufferTimer);
+    videoDubbingBackgroundBufferTimer = null;
+    videoDubbingBackgroundBufferPromise = null;
+    videoDubbingBackgroundBufferNextCheckAt = 0;
+    videoDubbingAudioReadyWaiters.clear();
+    videoDubbingTranslationFailures.clear();
+  }
+
+  function videoDubbingBufferNeedsWork(indices) {
+    return indices.some((index) => {
+      const cue = getVideoDubbingCue(index);
+      if (!cue?.text) return !isVideoDubbingTranslationBackedOff(index);
+      const cueKey = getVideoDubbingCueKey(cue);
+      if (cueKey && isVideoDubbingAudioFailed(cueKey)) return false;
+      return Boolean(
+        cueKey
+        && !videoDubbingAudioCache.has(cueKey)
+        && !videoDubbingAudioRequests.has(cueKey)
+      );
+    });
+  }
+
+  function scheduleVideoDubbingBackgroundBuffer(delayMs = 0, { force = false } = {}) {
+    if (!isVideoDubbingSessionArmed() || videoDubbingBackgroundBufferPromise || videoDubbingBackgroundBufferTimer) return;
+    const now = Date.now();
+    if (!force && videoDubbingBackgroundBufferNextCheckAt > now) return;
+    videoDubbingBackgroundBufferNextCheckAt = now + 900;
+
+    videoDubbingBackgroundBufferTimer = window.setTimeout(() => {
+      videoDubbingBackgroundBufferTimer = null;
+      if (!isVideoDubbingSessionArmed()) return;
+      const video = videoDubbingSessionVideo || getPrimaryVideo();
+      if (!video || video.ended || video.seeking) return;
+      const startIndex = findVideoDubbingCueIndex(video.currentTime);
+      const indices = collectVideoDubbingBufferIndices(
+        startIndex,
+        VIDEO_DUBBING_BACKGROUND_BUFFER_SECONDS,
+        VIDEO_DUBBING_BACKGROUND_BUFFER_MAX_CUES
+      );
+      if (!indices.length || !videoDubbingBufferNeedsWork(indices)) return;
+
+      const sessionId = videoDubbingSessionId;
+      let nextDelayMs = 1200;
+      const request = prepareVideoDubbingBuffer(
+        startIndex,
+        sessionId,
+        VIDEO_DUBBING_BACKGROUND_BUFFER_SECONDS,
+        {
+          maxCues: VIDEO_DUBBING_BACKGROUND_BUFFER_MAX_CUES,
+          updateStatus: false
+        }
+      ).catch(() => {
+        if (sessionId === videoDubbingSessionId && isVideoDubbingSessionArmed()) {
+          nextDelayMs = 2000;
+        }
+      }).finally(() => {
+        if (videoDubbingBackgroundBufferPromise === request) videoDubbingBackgroundBufferPromise = null;
+        if (sessionId === videoDubbingSessionId && isVideoDubbingSessionArmed()) {
+          scheduleVideoDubbingBackgroundBuffer(nextDelayMs);
+          syncVideoDubbing("background-buffer-ready");
+        }
+      });
+      videoDubbingBackgroundBufferPromise = request;
+    }, Math.max(0, Number(delayMs || 0)));
   }
 
   function resetVideoDubbingTimelineForPreparation() {
@@ -1202,7 +1429,7 @@
     videoDubbingResumeAfterSeekVideo = null;
     cancelYouTubeCaptionTimelineRequest();
     videoDubbingSessionId += 1;
-    videoDubbingBufferRefillPromise = null;
+    resetVideoDubbingBackgroundBuffer();
     videoDubbingSessionVideo = null;
     videoDubbingSessionWasPlaying = false;
     videoDubbingSessionStartIndex = -1;
@@ -1222,7 +1449,7 @@
     videoDubbingResumeAfterSeekVideo = null;
     cancelYouTubeCaptionTimelineRequest();
     videoDubbingSessionId += 1;
-    videoDubbingBufferRefillPromise = null;
+    resetVideoDubbingBackgroundBuffer();
     videoDubbingSessionVideo = null;
     videoDubbingSessionWasPlaying = false;
     videoDubbingSessionStartIndex = -1;
@@ -1246,7 +1473,6 @@
       return;
     }
     videoDubbingResumeAfterSeekVideo = null;
-    resetVideoDubbingAlignmentPauseIntent();
 
     const wasPlaying = resumePlayback === null
       ? !video.paused && !video.ended
@@ -1295,7 +1521,9 @@
       }
       if (startIndex < 0) throw new Error("Không còn phụ đề ở vị trí hiện tại");
       videoDubbingSessionStartIndex = startIndex;
-      await prepareVideoDubbingBuffer(startIndex, sessionId, VIDEO_DUBBING_INITIAL_BUFFER_SECONDS);
+      await prepareVideoDubbingBuffer(startIndex, sessionId, VIDEO_DUBBING_INITIAL_BUFFER_SECONDS, {
+        maxCues: VIDEO_DUBBING_INITIAL_BUFFER_MAX_CUES
+      });
       if (sessionId !== videoDubbingSessionId) return;
       if (video !== videoDubbingSessionVideo || !video.isConnected || video !== getPrimaryVideo()) {
         stopVideoDubbingSession({ resumeOriginal: false });
@@ -1303,6 +1531,7 @@
       }
 
       setVideoDubbingSessionState("ready", wasPlaying ? "Đã sẵn sàng · đang phát video…" : "Đã sẵn sàng · bấm Play để xem");
+      scheduleVideoDubbingBackgroundBuffer(0, { force: true });
       if (wasPlaying) {
         try {
           await video.play();
@@ -1325,45 +1554,10 @@
     if (isVideoDubbingSessionRequested()) {
       stopVideoDubbingSession({
         resumeOriginal: isVideoDubbingSessionPreparing()
-          || videoDubbingAlignmentHoldVideo === videoDubbingSessionVideo
       });
       return;
     }
     void startVideoDubbingSession();
-  }
-
-  function pauseAndRefillVideoDubbingBuffer(startIndex) {
-    if (videoDubbingBufferRefillPromise || !isVideoDubbingSessionArmed()) return videoDubbingBufferRefillPromise;
-    const sessionId = videoDubbingSessionId;
-    const video = videoDubbingSessionVideo || getPrimaryVideo();
-    if (!video) return null;
-    const shouldResume = !video.paused && !video.ended;
-    if (shouldResume) videoDubbingSessionWasPlaying = true;
-    try { video.pause(); } catch {}
-    stopVideoDubbing(true);
-    setVideoDubbingSessionState("buffering", "Đang nạp thêm giọng đọc…");
-    const request = prepareVideoDubbingBuffer(startIndex, sessionId, VIDEO_DUBBING_REFILL_BUFFER_SECONDS)
-      .then(async () => {
-        if (sessionId !== videoDubbingSessionId) return;
-        setVideoDubbingSessionState("ready", shouldResume ? "Đã nạp xong · đang phát video…" : "Đã nạp xong · bấm Play để xem");
-        if (shouldResume) {
-          try {
-            await video.play();
-            if (sessionId === videoDubbingSessionId) {
-              setVideoDubbingSessionState("running", "Đang lồng tiếng");
-              syncVideoDubbing("buffer-refilled");
-            }
-          } catch {
-            if (sessionId === videoDubbingSessionId) setVideoDubbingSessionState("ready", "Đã nạp xong · bấm Play để tiếp tục");
-          }
-        }
-      })
-      .catch((error) => failVideoDubbingSession(error?.message || String(error), sessionId))
-      .finally(() => {
-        if (videoDubbingBufferRefillPromise === request) videoDubbingBufferRefillPromise = null;
-      });
-    videoDubbingBufferRefillPromise = request;
-    return request;
   }
 
   function getVideoDubbingLanguageKey() {
@@ -1378,6 +1572,7 @@
   }
 
   function clearVideoDubbingAudioCache() {
+    resetVideoDubbingBackgroundBuffer();
     videoDubbingAudioCache.clear();
     videoDubbingAudioRequests.clear();
     videoDubbingAudioFailures.clear();
@@ -1737,90 +1932,8 @@
       }
     }
   }
-  function clearVideoDubbingAlignmentHold() {
-    const video = videoDubbingAlignmentHoldVideo;
-    videoDubbingAlignmentHoldVideo = null;
-    return video;
-  }
-  function resetVideoDubbingAlignmentPauseIntent() {
-    videoDubbingAlignmentHoldGeneration += 1;
-    videoDubbingAlignmentPauseIntent = null;
-  }
-  function clearVideoDubbingAlignmentPauseIntent(video = null) {
-    if (!video || videoDubbingAlignmentPauseIntent?.video === video) {
-      videoDubbingAlignmentPauseIntent = null;
-    }
-  }
-  function requestVideoDubbingAlignmentPause(video) {
-    if (!video || video.paused) return false;
-    const now = Date.now();
-    const previousIntent = videoDubbingAlignmentPauseIntent;
-    const canExtend = Boolean(
-      previousIntent
-      && previousIntent.video === video
-      && previousIntent.generation === videoDubbingAlignmentHoldGeneration
-      && previousIntent.expiresAt > now
-    );
-    videoDubbingAlignmentPauseIntent = {
-      video,
-      generation: videoDubbingAlignmentHoldGeneration,
-      pendingCount: canExtend ? previousIntent.pendingCount + 1 : 1,
-      expiresAt: now + 1500
-    };
-    try {
-      video.pause();
-      return true;
-    } catch {
-      videoDubbingAlignmentPauseIntent = previousIntent;
-      return false;
-    }
-  }
-  function consumeVideoDubbingAlignmentPauseIntent(video) {
-    const intent = videoDubbingAlignmentPauseIntent;
-    if (!intent || intent.video !== video) return false;
-    if (intent.expiresAt <= Date.now() || intent.pendingCount < 1) {
-      videoDubbingAlignmentPauseIntent = null;
-      return false;
-    }
-    const pendingCount = intent.pendingCount - 1;
-    videoDubbingAlignmentPauseIntent = pendingCount > 0
-      ? { ...intent, pendingCount }
-      : null;
-    return true;
-  }
-  function beginVideoDubbingAlignmentHold(video) {
-    if (!video || video.paused || video.seeking || video.ended) return false;
-    videoDubbingAlignmentHoldGeneration += 1;
-    videoDubbingAlignmentHoldVideo = video;
-    if (video === videoDubbingSessionVideo) videoDubbingSessionWasPlaying = true;
-    if (!requestVideoDubbingAlignmentPause(video)) {
-      videoDubbingAlignmentHoldVideo = null;
-      return false;
-    }
-    return true;
-  }
-  async function resumeVideoDubbingAlignmentHold(video) {
-    if (
-      !video
-      || video !== videoDubbingSessionVideo
-      || !isVideoDubbingSessionArmed()
-      || !videoDubbingSessionWasPlaying
-    ) return false;
-    const resumed = await resumeOriginalVideoAfterDubbingStop(video, true);
-    if (
-      !resumed
-      && video === videoDubbingSessionVideo
-      && video.paused
-      && videoDubbingSessionState === "running"
-    ) {
-      videoDubbingSessionWasPlaying = false;
-      setVideoDubbingSessionState("ready", "Đã chuẩn bị · bấm Play để tiếp tục");
-    }
-    return resumed;
-  }
   function stopVideoDubbing(restoreOriginal = false) {
     const activeUtterance = videoDubbingUtterance;
-    clearVideoDubbingAlignmentHold();
     videoDubbingToken += 1;
     clearVideoDubbingTimer();
     videoDubbingActiveCueKey = "";
@@ -1923,6 +2036,25 @@
       if (!cueKey || videoDubbingAudioCache.has(cueKey) || videoDubbingAudioRequests.has(cueKey)) continue;
       void requestVideoDubbingAudio(cue, cueKey, { manualSession: true }).catch(() => {});
     }
+  }
+  function waitForVideoDubbingAudioWithoutPausing(cue, cueKey) {
+    if (!cue?.text || !cueKey || videoDubbingAudioReadyWaiters.has(cueKey)) return;
+    const sessionId = videoDubbingSessionId;
+    videoDubbingAudioReadyWaiters.set(cueKey, sessionId);
+    void requestVideoDubbingAudio(cue, cueKey, { manualSession: true })
+      .catch(() => {
+        if (sessionId === videoDubbingSessionId) {
+          videoDubbingAudioFailures.set(cueKey, Date.now() + 5000);
+        }
+      })
+      .finally(() => {
+        if (videoDubbingAudioReadyWaiters.get(cueKey) === sessionId) {
+          videoDubbingAudioReadyWaiters.delete(cueKey);
+        }
+        if (sessionId === videoDubbingSessionId && isVideoDubbingSessionArmed()) {
+          syncVideoDubbing("audio-ready-without-pause");
+        }
+      });
   }
   function waitForVideoDubbingAudioMetadata(audio, timeoutMs = 900) {
     if (audio.readyState >= 1 && Number.isFinite(audio.duration)) return Promise.resolve();
@@ -2027,7 +2159,6 @@
 
     const finish = (failed = false, completed = false) => {
       if (token !== videoDubbingToken || videoDubbingAudio !== audio) return;
-      const alignmentHoldVideo = clearVideoDubbingAlignmentHold();
       clearVideoDubbingTimer();
       videoDubbingAudio = null;
       videoDubbingActiveCueKey = "";
@@ -2054,12 +2185,7 @@
       }
       if (isLiveCue && hasPendingVideoDubbingLiveCue()) schedulePendingLiveVideoDubbing(failed ? 220 : 40);
       const syncReason = failed ? "audio-error" : "audio-finished";
-      if (alignmentHoldVideo) {
-        void resumeVideoDubbingAlignmentHold(alignmentHoldVideo)
-          .finally(() => syncVideoDubbing(syncReason));
-      } else {
-        window.setTimeout(() => syncVideoDubbing(syncReason), 0);
-      }
+      window.setTimeout(() => syncVideoDubbing(syncReason), 0);
     };
     audio.onended = () => finish(false, true);
     audio.onerror = () => finish(true);
@@ -2080,13 +2206,10 @@
     if (Number.isFinite(audio.duration) && audio.duration > 0) {
       audio.preservesPitch = true;
       const requiredRate = audio.duration / availableWallSeconds;
-      audio.playbackRate = clampNumber(requiredRate, 0.95, 2.35, 1);
-      // If even the maximum intelligible rate cannot fit before the next cue,
-      // hold the picture on this caption instead of letting its voice drift
-      // into the following caption.
-      if (!isLiveCue && requiredRate > 2.35 + 0.01) {
-        beginVideoDubbingAlignmentHold(video);
-      }
+      // Prefer continuous video playback. Speed long translations toward their
+      // caption budget (up to the safe media-rate cap) instead of freezing the
+      // picture until TTS catches up.
+      audio.playbackRate = clampNumber(requiredRate, 0.95, VIDEO_DUBBING_MAX_PLAYBACK_RATE, 1);
     }
 
     try {
@@ -2098,7 +2221,6 @@
     if (token !== videoDubbingToken || videoDubbingAudio !== audio) return;
     if (
       !isLiveCue
-      && videoDubbingAlignmentHoldVideo !== video
       && Number.isFinite(audio.duration)
       && audio.duration > 0
     ) {
@@ -2114,8 +2236,7 @@
       const remainingWallSeconds = Math.max(0.04, remainingVideoSeconds / playbackRate);
       const remainingAudioSeconds = Math.max(0.01, audio.duration - Number(audio.currentTime || 0));
       const activeRequiredRate = remainingAudioSeconds / remainingWallSeconds;
-      audio.playbackRate = clampNumber(activeRequiredRate, 0.95, 2.35, 1);
-      if (activeRequiredRate > 2.35 + 0.01) beginVideoDubbingAlignmentHold(video);
+      audio.playbackRate = clampNumber(activeRequiredRate, 0.95, VIDEO_DUBBING_MAX_PLAYBACK_RATE, 1);
     }
     setVideoDubbingActiveCueDiagnostic(cue);
     setVideoDubbingState("playing");
@@ -2127,15 +2248,9 @@
     const remainingWallMs = getVideoDubbingWatchdogMs(expectedWallSeconds);
     videoDubbingTimer = window.setTimeout(() => {
       if (token !== videoDubbingToken || videoDubbingAudio !== audio) return;
-      const alignmentHoldVideo = clearVideoDubbingAlignmentHold();
       if (!isLiveCue) videoDubbingConsumedCueKeys.add(cueKey);
       stopVideoDubbing(false);
-      if (alignmentHoldVideo) {
-        void resumeVideoDubbingAlignmentHold(alignmentHoldVideo)
-          .finally(() => syncVideoDubbing("audio-timeout"));
-      } else {
-        syncVideoDubbing("audio-timeout");
-      }
+      syncVideoDubbing("audio-timeout");
     }, remainingWallMs);
   }
   function speakVideoDubbingCue(video, cue, cueKey) {
@@ -2224,11 +2339,6 @@
       return;
     }
     const video = getPrimaryVideo();
-    if (
-      video
-      && video === videoDubbingAlignmentHoldVideo
-      && (videoDubbingAudio || videoDubbingUtterance)
-    ) return;
     if (!video || video.paused || video.seeking || video.ended) {
       if (videoDubbingUtterance || videoDubbingAudio || videoDubbingAudioPendingKey || videoDubbingTimer || videoDubbingVideo) {
         stopVideoDubbing(true);
@@ -2328,7 +2438,12 @@
         continue;
       }
       if (!videoDubbingAudioCache.has(cueKey)) {
-        pauseAndRefillVideoDubbingBuffer(index);
+        // Startup and the rolling high-water buffer should normally make this
+        // path rare. If the network still falls behind, keep the picture moving
+        // and join the in-flight request; a late cue is preferable to freezing
+        // the video in the middle of playback.
+        scheduleVideoDubbingBackgroundBuffer(0, { force: true });
+        waitForVideoDubbingAudioWithoutPausing(cue, cueKey);
         return;
       }
       if (videoDubbingAudioPendingKey === cueKey) return;
@@ -3086,8 +3201,8 @@
   function getDefaultVideoSubtitleDragPositions() {
     const top = settings.videoSubtitlePosition === "top";
     return top
-      ? { source: { x: 50, y: 14 }, translation: { x: 50, y: 24 } }
-      : { source: { x: 50, y: 76 }, translation: { x: 50, y: 86 } };
+      ? { source: { x: 50, y: 19 }, translation: { x: 50, y: 24 } }
+      : { source: { x: 50, y: 81 }, translation: { x: 50, y: 86 } };
   }
 
   function sanitizeVideoSubtitlePosition(value, fallback) {
@@ -3107,9 +3222,33 @@
 
   async function loadVideoSubtitleDragPositions() {
     if (videoSubtitlePositionLoadPromise) return videoSubtitlePositionLoadPromise;
-    videoSubtitlePositionLoadPromise = chrome.storage.local.get(VIDEO_SUBTITLE_POSITION_STORAGE_KEY)
-      .then((stored) => {
-        const byOrigin = stored?.[VIDEO_SUBTITLE_POSITION_STORAGE_KEY] || {};
+    videoSubtitlePositionLoadPromise = chrome.storage.local.get([
+      VIDEO_SUBTITLE_POSITION_STORAGE_KEY,
+      VIDEO_SUBTITLE_POSITION_LAYOUT_VERSION_KEY
+    ])
+      .then(async (stored) => {
+        let byOrigin = stored?.[VIDEO_SUBTITLE_POSITION_STORAGE_KEY] || {};
+        const storedLayoutVersion = Number(stored?.[VIDEO_SUBTITLE_POSITION_LAYOUT_VERSION_KEY] || 0);
+        if (storedLayoutVersion < VIDEO_SUBTITLE_POSITION_LAYOUT_VERSION) {
+          const sourceShift = storedLayoutVersion < 1 ? 5 : 4;
+          byOrigin = Object.fromEntries(
+            Object.entries(byOrigin).map(([origin, positions]) => {
+              const source = positions?.source;
+              if (!source || !Number.isFinite(Number(source.y))) return [origin, positions];
+              return [origin, {
+                ...positions,
+                source: {
+                  ...source,
+                  y: clampNumber(Number(source.y) + sourceShift, 0, 100, 81)
+                }
+              }];
+            })
+          );
+          await chrome.storage.local.set({
+            [VIDEO_SUBTITLE_POSITION_STORAGE_KEY]: byOrigin,
+            [VIDEO_SUBTITLE_POSITION_LAYOUT_VERSION_KEY]: VIDEO_SUBTITLE_POSITION_LAYOUT_VERSION
+          });
+        }
         videoSubtitleDragPositions = byOrigin[getPageOrigin()] || null;
         applyVideoSubtitleItemPositions();
       })
@@ -3228,7 +3367,7 @@
     karaokeEnd = null,
     karaokeMode = ""
   } = {}) {
-    if (!settings.videoSubtitleEnabled) {
+    if (!shouldDisplayCurrentVideoSubtitles()) {
       hideVideoSubtitleOverlay();
       return;
     }
@@ -4310,7 +4449,6 @@
     if (extensionTornDown) return;
     extensionTornDown = true;
     videoDubbingResumeAfterSeekVideo = null;
-    resetVideoDubbingAlignmentPauseIntent();
     console.log("[InputBridge] Orphaned extension script detected. Tearing down...");
 
     const orphanedSessionVideo = videoDubbingSessionVideo;
@@ -4322,7 +4460,7 @@
     // Invalidate every async prepare/refill continuation without calling the
     // normal session stop path, which would try to rebuild UI during teardown.
     videoDubbingSessionId += 1;
-    videoDubbingBufferRefillPromise = null;
+    resetVideoDubbingBackgroundBuffer();
     videoDubbingSessionVideo = null;
     videoDubbingSessionWasPlaying = false;
     videoDubbingSessionStartIndex = -1;
@@ -4335,18 +4473,21 @@
     stopVideoDubbing(true);
     setNativeVideoCaptionsHidden(false);
     if (youtubeVideoControlSyncFrame) cancelAnimationFrame(youtubeVideoControlSyncFrame);
+    if (youtubeNativeCaptionStateSyncFrame) cancelAnimationFrame(youtubeNativeCaptionStateSyncFrame);
     if (videoSubtitleTimer) clearTimeout(videoSubtitleTimer);
     if (videoSubtitleEmptyTimer) clearTimeout(videoSubtitleEmptyTimer);
     teardownVideoSubtitleAudioVad();
     
     videoSubtitleObserver?.disconnect();
     youtubeVideoControlObserver?.disconnect();
+    youtubeNativeCaptionStateObserver?.disconnect();
 
     window.removeEventListener("scroll", onViewportScroll, true);
     window.removeEventListener("resize", repositionAll, true);
     window.removeEventListener("message", onVideoCaptionBridgeMessage);
     document.removeEventListener("pointerdown", onYouTubeControlDocumentPointerDown, true);
     document.removeEventListener("keydown", onYouTubeControlDocumentKeyDown, true);
+    document.removeEventListener("loadedmetadata", onAnyVideoMetadataLoaded, true);
     document.removeEventListener("yt-navigate-start", onYouTubeVideoControlNavigation, true);
     document.removeEventListener("yt-navigate-finish", onYouTubeVideoControlNavigation, true);
     document.removeEventListener("yt-navigate-finish", onVideoSubtitleNavigation, true);
@@ -4442,6 +4583,11 @@
   function syncYouTubeVideoControl() {
     if (extensionTornDown) return;
     if (!isYouTubeVideoPage()) {
+      youtubeNativeCaptionStateObserver?.disconnect();
+      youtubeNativeCaptionStateObserver = null;
+      youtubeNativeCaptionStateButton = null;
+      if (youtubeNativeCaptionStateSyncFrame) cancelAnimationFrame(youtubeNativeCaptionStateSyncFrame);
+      youtubeNativeCaptionStateSyncFrame = 0;
       youtubeVideoControlObserver?.disconnect();
       youtubeVideoControlObserver = null;
       if (youtubeVideoControlSyncFrame) cancelAnimationFrame(youtubeVideoControlSyncFrame);
@@ -4454,6 +4600,8 @@
       youtubeVideoControlPanelEl = null;
       return;
     }
+
+    syncYouTubeNativeCaptionStateObserver();
 
     if (
       youtubeVideoDubbingButtonEl?.isConnected
@@ -4472,6 +4620,32 @@
       });
     }
     scheduleYouTubeVideoControlSync();
+  }
+
+  function syncYouTubeNativeCaptionStateObserver() {
+    const button = document.querySelector(".html5-video-player .ytp-subtitles-button");
+    if (
+      button
+      && button === youtubeNativeCaptionStateButton
+      && youtubeNativeCaptionStateObserver
+    ) return;
+
+    youtubeNativeCaptionStateObserver?.disconnect();
+    youtubeNativeCaptionStateObserver = null;
+    youtubeNativeCaptionStateButton = button || null;
+    if (!button) return;
+
+    youtubeNativeCaptionStateObserver = new MutationObserver(() => {
+      if (youtubeNativeCaptionStateSyncFrame) return;
+      youtubeNativeCaptionStateSyncFrame = requestAnimationFrame(() => {
+        youtubeNativeCaptionStateSyncFrame = 0;
+        syncVideoSubtitleFeature();
+      });
+    });
+    youtubeNativeCaptionStateObserver.observe(button, {
+      attributes: true,
+      attributeFilter: ["aria-pressed", "class"]
+    });
   }
 
   function scheduleYouTubeVideoControlSync() {
@@ -4558,6 +4732,10 @@
           <button class="ib-youtube-panel-close" data-role="close" type="button" aria-label="Đóng">×</button>
         </div>
         <div class="ib-youtube-panel-body" data-role="main-view">
+          <button class="ib-youtube-session-subtitle-toggle" data-role="temporary-toggle" type="button">
+            <span data-role="temporary-toggle-label">Tắt riêng video này</span>
+            <small>Chỉ trong phiên này · không lưu</small>
+          </button>
           <div class="ib-youtube-panel-row ib-youtube-panel-row-visibility" data-subtitle-visibility-row="source">
             <div class="ib-youtube-panel-row-title">
               <span>Phụ đề gốc</span>
@@ -4677,6 +4855,9 @@
       syncVideoSubtitleFeature();
       updateYouTubeVideoControl();
     });
+    panel.querySelector('[data-role="temporary-toggle"]')?.addEventListener("click", () => {
+      toggleCurrentVideoSubtitleTemporaryDisabled();
+    });
     panel.querySelector('[data-role="source"]')?.addEventListener("change", async (event) => {
       settings.videoSubtitleSourceLanguage = event.target.value || "auto";
       resetVideoCaptionSession();
@@ -4705,7 +4886,6 @@
       } else if (!requested && isVideoDubbingSessionRequested()) {
         stopVideoDubbingSession({
           resumeOriginal: isVideoDubbingSessionPreparing()
-            || videoDubbingAlignmentHoldVideo === videoDubbingSessionVideo
         });
       }
       updateYouTubeVideoControl();
@@ -4992,12 +5172,24 @@
     if (!button || !dubbingButton || !panel) return;
     dubbingButton.dataset.dubbingSyncMode = "latest-start";
 
-    const enabled = Boolean(settings.enabled && settings.videoSubtitleEnabled);
+    const currentVideoSession = getCurrentVideoSubtitleSessionState();
+    const temporarilyDisabled = currentVideoSession.temporarilyDisabled;
+    const waitingForYouTubeCaptions = Boolean(
+      settings.videoSubtitleEnabled
+      && currentVideoSession.requiresNativeCaptions
+      && !currentVideoSession.nativeCaptionsEnabled
+    );
+    const enabled = currentVideoSession.effectiveEnabled;
     button.classList.toggle("is-enabled", enabled);
+    button.classList.toggle("is-session-disabled", temporarilyDisabled);
     button.setAttribute("aria-pressed", String(enabled));
-    button.title = enabled
-      ? `InputBridge · ${settings.videoSubtitleTargetLanguage || "Vietnamese"}`
-      : "Bật phụ đề InputBridge";
+    button.title = waitingForYouTubeCaptions
+      ? "Bật phụ đề YouTube (CC) để chạy phụ đề InputBridge"
+      : temporarilyDisabled
+      ? "Phụ đề InputBridge đang tắt riêng cho video này"
+      : (enabled
+        ? `InputBridge · ${settings.videoSubtitleTargetLanguage || "Vietnamese"}`
+        : "Bật phụ đề InputBridge");
 
     const quickLabels = {
       idle: "Lồng tiếng",
@@ -5034,6 +5226,8 @@
     const dubbingEnabledInput = panel.querySelector('[data-role="dubbing-enabled"]');
     const dubbingOriginalVolumeSelect = panel.querySelector('[data-role="dubbing-original-volume"]');
     const dubbingVoiceSelect = panel.querySelector('[data-role="dubbing-voice"]');
+    const temporaryToggle = panel.querySelector('[data-role="temporary-toggle"]');
+    const temporaryToggleLabel = panel.querySelector('[data-role="temporary-toggle-label"]');
     const showSource = Boolean(settings.videoSubtitleShowSource);
     const showTranslation = settings.videoSubtitleShowTranslation !== false;
     const dubbingEnabled = isVideoDubbingSessionRequested();
@@ -5055,17 +5249,35 @@
       populateVideoDubbingVoiceSelect(dubbingVoiceSelect);
       dubbingVoiceSelect.disabled = isVideoDubbingSessionPreparing();
     }
+    if (temporaryToggle) {
+      temporaryToggle.disabled = (
+        !currentVideoSession.available
+        || !settings.videoSubtitleEnabled
+        || waitingForYouTubeCaptions
+      );
+      temporaryToggle.classList.toggle("is-active", temporarilyDisabled);
+      temporaryToggle.setAttribute("aria-pressed", String(temporarilyDisabled));
+    }
+    if (temporaryToggleLabel) {
+      temporaryToggleLabel.textContent = temporarilyDisabled
+        ? "Bật lại phụ đề video này"
+        : "Tắt riêng video này";
+    }
     panel.querySelector('[data-subtitle-visibility-row="source"]')?.classList.toggle("is-line-hidden", !showSource);
     panel.querySelector('[data-subtitle-visibility-row="translation"]')?.classList.toggle("is-line-hidden", !showTranslation);
     const status = panel.querySelector('[data-role="status"]');
     if (status) {
       status.textContent = videoDubbingSessionStatus
-        || videoCaptionTimelineError
-        || (enabled
-          ? (!showSource && !showTranslation
-            ? "Đang ẩn cả hai dòng"
-            : `${settings.videoSubtitleTargetLanguage || "Vietnamese"} · phụ đề đang chạy`)
-          : "Phụ đề đang tắt · lồng tiếng chỉ chạy khi bấm");
+        || (waitingForYouTubeCaptions
+          ? "Hãy bật phụ đề YouTube (CC)"
+          : videoCaptionTimelineError
+            || (temporarilyDisabled
+              ? "Đã tắt riêng video này · không lưu"
+              : enabled
+                ? (!showSource && !showTranslation
+                  ? "Đang ẩn cả hai dòng"
+                  : `${settings.videoSubtitleTargetLanguage || "Vietnamese"} · phụ đề đang chạy`)
+                : "Phụ đề đang tắt · lồng tiếng chỉ chạy khi bấm"));
     }
     updateYouTubeVideoStyleEditor();
   }
@@ -5094,7 +5306,6 @@
 
   function onYouTubeVideoControlNavigation() {
     videoDubbingResumeAfterSeekVideo = null;
-    resetVideoDubbingAlignmentPauseIntent();
     if (isVideoDubbingSessionRequested()) {
       stopVideoDubbingSession({ resumeOriginal: false });
     } else if (videoDubbingSessionState === "error") {
@@ -5106,6 +5317,10 @@
   }
 
   function onYouTubeControlDocumentPointerDown(event) {
+    const eventTarget = event.target instanceof Element ? event.target : null;
+    if (eventTarget?.closest(".ytp-subtitles-button")) {
+      window.setTimeout(syncVideoSubtitleFeature, 0);
+    }
     if (!youtubeVideoControlPanelEl?.classList.contains("is-open")) return;
     const target = event.target instanceof Node ? event.target : null;
     if (target && (
@@ -5117,6 +5332,14 @@
   }
 
   function onYouTubeControlDocumentKeyDown(event) {
+    if (
+      event.key?.toLowerCase() === "c"
+      && !event.ctrlKey
+      && !event.metaKey
+      && !event.altKey
+    ) {
+      window.setTimeout(syncVideoSubtitleFeature, 0);
+    }
     if (event.key === "Escape") closeYouTubeVideoControlPanel();
   }
 
@@ -5657,6 +5880,14 @@
                 ${renderLanguageOptions(settings.targetLanguage)}
               </select>
             </div>
+            <div>
+              <span class="ib-settings-label">Apply Behavior</span>
+              <select id="ib-inline-auto-mode" class="ib-select">
+                <option value="preview" ${settings.autoMode === 'preview' ? 'selected' : ''}>Manual Apply (default)</option>
+                <option value="autoReplace" ${settings.autoMode === 'autoReplace' ? 'selected' : ''}>Auto Apply</option>
+                <option value="autoOnSend" ${settings.autoMode === 'autoOnSend' ? 'selected' : ''}>Auto on Send</option>
+              </select>
+            </div>
           </div>
         </div>
 
@@ -5710,9 +5941,25 @@
       }
     };
 
+    const handleInlineAutoModeChange = async (event) => {
+      const nextAutoMode = ["preview", "autoReplace", "autoOnSend"].includes(event.target.value)
+        ? event.target.value
+        : "preview";
+      settings.autoMode = nextAutoMode;
+      await saveSyncSettings({ autoMode: nextAutoMode });
+      if (nextAutoMode === "autoReplace" && currentPreview?.result) {
+        applyPreview("autoReplace-setting");
+        return;
+      }
+      showToast(nextAutoMode === "autoOnSend"
+        ? "Đã bật tự động dịch khi gửi."
+        : "Đã chuyển sang bấm Apply thủ công.");
+    };
+
     previewEl.querySelector('#ib-inline-mode')?.addEventListener("change", handleInlineSettingsChange);
     previewEl.querySelector('#ib-inline-tone')?.addEventListener("change", handleInlineSettingsChange);
     previewEl.querySelector('#ib-inline-lang')?.addEventListener("change", handleInlineSettingsChange);
+    previewEl.querySelector('#ib-inline-auto-mode')?.addEventListener("change", handleInlineAutoModeChange);
 
     previewEl.style.display = "block";
     positionPreview();
