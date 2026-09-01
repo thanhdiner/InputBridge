@@ -813,6 +813,11 @@ function hideSelectionToolbar(force = false) {
   selectionToolbar.hidden = true;
   selectionToolbar.classList.remove("is-copied");
   if (subTranslatePopover) subTranslatePopover.hidden = true;
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio = null;
+  }
+  setSubTransSpeakState("idle");
 }
 
 async function copySelectedLayoutText() {
@@ -1050,6 +1055,15 @@ function initSubTranslate() {
   subTransSpeak?.addEventListener("click", async (event) => {
     event.stopPropagation();
     if (!currentSubTranslation) return;
+
+    if (currentAudio && !currentAudio.paused) {
+      currentAudio.pause();
+      currentAudio = null;
+      setSubTransSpeakState("idle");
+      return;
+    }
+
+    setSubTransSpeakState("loading");
     try {
       const res = await window.inputBridge.speakResult({
         text: currentSubTranslation,
@@ -1058,9 +1072,22 @@ function initSubTranslate() {
       if (res?.audioBase64) {
         if (currentAudio) currentAudio.pause();
         currentAudio = new Audio(`data:${res.contentType};base64,${res.audioBase64}`);
-        currentAudio.play();
+        setSubTransSpeakState("playing");
+        currentAudio.onended = () => {
+          setSubTransSpeakState("idle");
+          currentAudio = null;
+        };
+        currentAudio.onerror = () => {
+          setSubTransSpeakState("idle");
+          currentAudio = null;
+        };
+        await currentAudio.play();
+      } else {
+        setSubTransSpeakState("idle");
       }
-    } catch {}
+    } catch {
+      setSubTransSpeakState("idle");
+    }
   });
 
   document.addEventListener("click", (event) => {
@@ -1069,6 +1096,21 @@ function initSubTranslate() {
       subTransDropdown.hidden = true;
     }
   });
+}
+
+function setSubTransSpeakState(state) {
+  if (!subTransSpeak) return;
+  const span = subTransSpeak.querySelector("span");
+  subTransSpeak.classList.toggle("is-loading", state === "loading");
+  subTransSpeak.classList.toggle("is-speaking", state === "playing");
+
+  if (state === "loading") {
+    if (span) span.textContent = "Đang tải…";
+  } else if (state === "playing") {
+    if (span) span.textContent = "Đang đọc…";
+  } else {
+    if (span) span.textContent = "Nghe đọc";
+  }
 }
 
 function toggleSubTransDropdown() {

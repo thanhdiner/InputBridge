@@ -1075,13 +1075,10 @@ button.traffic:hover { filter: brightness(.9); }
   white-space: pre-wrap;
   padding: 2px 0;
 }
-.sub-trans-footer {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 2px;
-}
 .sub-trans-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 3px 8px;
   border-radius: 5px;
   border: 1px solid rgba(80, 96, 130, 0.14);
@@ -1090,12 +1087,39 @@ button.traffic:hover { filter: brightness(.9); }
   font-weight: 600;
   color: #475569;
   cursor: pointer;
-  transition: all 0.1s ease;
+  transition: all 0.12s ease;
 }
 .sub-trans-btn:hover {
   background: #f0f6ff;
   color: #007aff;
   border-color: rgba(0, 122, 255, 0.3);
+}
+.sub-trans-btn.is-loading {
+  opacity: 0.85;
+  color: #007aff;
+  border-color: rgba(0, 122, 255, 0.3);
+  background: #f0f6ff;
+  cursor: wait;
+}
+.sub-trans-btn.is-loading svg {
+  animation: spinIcon 0.8s linear infinite;
+}
+@keyframes spinIcon {
+  100% { transform: rotate(360deg); }
+}
+.sub-trans-btn.is-speaking {
+  background: #007aff;
+  color: #ffffff;
+  border-color: #007aff;
+  box-shadow: 0 2px 8px rgba(0, 122, 255, 0.35);
+}
+.sub-trans-btn.is-speaking svg {
+  color: #ffffff;
+  animation: pulseAudio 0.8s ease-in-out infinite alternate;
+}
+@keyframes pulseAudio {
+  0% { transform: scale(0.95); opacity: 0.85; }
+  100% { transform: scale(1.18); opacity: 1; }
 }
 
 .text-block {
