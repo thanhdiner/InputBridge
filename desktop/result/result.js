@@ -721,7 +721,12 @@ function scheduleSelectionToolbarUpdate() {
 function updateSelectionToolbar() {
   selectionUpdateFrame = 0;
   if (interactionMode !== "select" || layoutBlock.hidden) {
-    hideSelectionToolbar();
+    hideSelectionToolbar(true);
+    return;
+  }
+
+  // If subTranslatePopover is actively shown, don't close it due to click/selection inside popover
+  if (subTranslatePopover && !subTranslatePopover.hidden) {
     return;
   }
 
@@ -798,7 +803,8 @@ function positionSubTranslatePopover() {
   subTranslatePopover.style.transform = `translateX(calc(-50% + ${Math.round(shiftX)}px))`;
 }
 
-function hideSelectionToolbar() {
+function hideSelectionToolbar(force = false) {
+  if (!force && subTranslatePopover && !subTranslatePopover.hidden) return;
   selectedLayoutText = "";
   selectionToolbar.hidden = true;
   selectionToolbar.classList.remove("is-copied");
@@ -1026,9 +1032,10 @@ function initSubTranslate() {
     event.stopPropagation();
     if (!currentSubTranslation) return;
     await window.inputBridge.copyResult(currentSubTranslation);
-    const origText = subTransCopy.textContent;
-    subTransCopy.textContent = "Đã sao chép";
-    setTimeout(() => { if (subTransCopy) subTransCopy.textContent = origText; }, 1200);
+    const span = subTransCopy.querySelector("span");
+    const origText = span ? span.textContent : "Sao chép";
+    if (span) span.textContent = "Đã sao chép";
+    setTimeout(() => { if (span) span.textContent = origText; }, 1200);
   });
   subTransSpeak?.addEventListener("click", async (event) => {
     event.stopPropagation();
