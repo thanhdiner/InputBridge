@@ -216,7 +216,19 @@
       <div class="sub-trans-header">
         <div class="sub-trans-picker-group">
           <span class="sub-trans-picker-label">Dịch sang:</span>
-          <select id="subTransLangSelect" class="sub-trans-select" title="Chọn ngôn ngữ đích cho cụm này"></select>
+          <div class="sub-lang-wrap">
+            <button id="subTransLangBtn" type="button" class="sub-trans-lang-btn" title="Chọn ngôn ngữ đích">
+              <span id="subTransLangText">English</span>
+              <svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <div id="subTransDropdown" class="sub-lang-menu" hidden>
+              <div class="sub-lang-search">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                <input type="text" id="subTransSearch" placeholder="Tìm ngôn ngữ…" autocomplete="off">
+              </div>
+              <div id="subTransList" class="sub-lang-list"></div>
+            </div>
+          </div>
         </div>
         <button id="subTransClose" type="button" class="sub-trans-close" title="Đóng">
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>

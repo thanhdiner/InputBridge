@@ -48,7 +48,11 @@ const selectionToolbar = document.getElementById("selectionToolbar");
 const copySelectionButton = document.getElementById("copySelectionButton");
 const translateSelectionButton = document.getElementById("translateSelectionButton");
 const subTranslatePopover = document.getElementById("subTranslatePopover");
-const subTransLangSelect = document.getElementById("subTransLangSelect");
+const subTransLangBtn = document.getElementById("subTransLangBtn");
+const subTransLangText = document.getElementById("subTransLangText");
+const subTransDropdown = document.getElementById("subTransDropdown");
+const subTransSearch = document.getElementById("subTransSearch");
+const subTransList = document.getElementById("subTransList");
 const subTransClose = document.getElementById("subTransClose");
 const subTransOrigRow = document.getElementById("subTransOrigRow");
 const subTransOrigText = document.getElementById("subTransOrigText");
@@ -1008,6 +1012,7 @@ async function onCropCopy() {
 }
 
 let currentSubTranslation = "";
+let currentSubTargetLanguage = "English";
 
 function isVietnameseText(str) {
   const text = String(str || "").normalize("NFC").toLowerCase();
@@ -1015,19 +1020,23 @@ function isVietnameseText(str) {
 }
 
 function initSubTranslate() {
-  populateSubTransLanguages();
   subTranslatePopover?.addEventListener("pointerdown", (event) => event.stopPropagation());
   subTranslatePopover?.addEventListener("click", (event) => event.stopPropagation());
 
   subTransClose?.addEventListener("click", (event) => {
     event.stopPropagation();
-    if (subTranslatePopover) subTranslatePopover.hidden = true;
+    hideSelectionToolbar(true);
   });
-  subTransLangSelect?.addEventListener("change", (event) => {
+
+  subTransLangBtn?.addEventListener("click", (event) => {
     event.stopPropagation();
-    const target = subTransLangSelect.value;
-    runSubTranslation(target);
+    toggleSubTransDropdown();
   });
+
+  subTransSearch?.addEventListener("input", () => {
+    filterSubTransLanguages(subTransSearch.value);
+  });
+
   subTransCopy?.addEventListener("click", async (event) => {
     event.stopPropagation();
     if (!currentSubTranslation) return;
@@ -1037,13 +1046,14 @@ function initSubTranslate() {
     if (span) span.textContent = "Đã sao chép";
     setTimeout(() => { if (span) span.textContent = origText; }, 1200);
   });
+
   subTransSpeak?.addEventListener("click", async (event) => {
     event.stopPropagation();
     if (!currentSubTranslation) return;
     try {
       const res = await window.inputBridge.speakResult({
         text: currentSubTranslation,
-        locale: subTransLangSelect?.value || current?.targetLanguage || "vi-VN"
+        locale: currentSubTargetLanguage || current?.targetLanguage || "vi-VN"
       });
       if (res?.audioBase64) {
         if (currentAudio) currentAudio.pause();
@@ -1052,18 +1062,60 @@ function initSubTranslate() {
       }
     } catch {}
   });
+
+  document.addEventListener("click", (event) => {
+    if (!subTransDropdown || subTransDropdown.hidden) return;
+    if (!event.target.closest(".sub-lang-wrap")) {
+      subTransDropdown.hidden = true;
+    }
+  });
 }
 
-function populateSubTransLanguages() {
-  if (!subTransLangSelect || subTransLangSelect.children.length > 0) return;
-  subTransLangSelect.innerHTML = "";
-  const langs = (availableLanguages && availableLanguages.length) ? availableLanguages : POPULAR_LANGUAGES;
-  for (const item of langs) {
-    const opt = document.createElement("option");
-    opt.value = item.name;
-    opt.textContent = item.name;
-    subTransLangSelect.appendChild(opt);
+function toggleSubTransDropdown() {
+  if (!subTransDropdown) return;
+  const isOpening = subTransDropdown.hidden;
+  subTransDropdown.hidden = !isOpening;
+  if (isOpening) {
+    if (subTransSearch) {
+      subTransSearch.value = "";
+      setTimeout(() => subTransSearch.focus(), 40);
+    }
+    const langs = availableLanguages && availableLanguages.length ? availableLanguages : POPULAR_LANGUAGES;
+    renderSubTransLanguageList(langs);
   }
+}
+
+function renderSubTransLanguageList(languages = []) {
+  if (!subTransList) return;
+  subTransList.innerHTML = "";
+  for (const item of languages) {
+    const el = document.createElement("div");
+    el.className = `sub-lang-item ${item.name === currentSubTargetLanguage ? "is-selected" : ""}`;
+    el.innerHTML = `<span>${item.name}</span>`;
+    el.addEventListener("click", (event) => {
+      event.stopPropagation();
+      selectSubTargetLanguage(item.name);
+    });
+    subTransList.appendChild(el);
+  }
+}
+
+function filterSubTransLanguages(query = "") {
+  const q = query.trim().toLowerCase();
+  const langs = availableLanguages && availableLanguages.length ? availableLanguages : POPULAR_LANGUAGES;
+  if (!q) {
+    renderSubTransLanguageList(langs);
+    return;
+  }
+  const filtered = langs.filter((l) => l.name.toLowerCase().includes(q) || (l.code && l.code.toLowerCase().includes(q)));
+  renderSubTransLanguageList(filtered);
+}
+
+function selectSubTargetLanguage(langName) {
+  currentSubTargetLanguage = langName;
+  if (subTransLangText) subTransLangText.textContent = langName;
+  if (subTransDropdown) subTransDropdown.hidden = true;
+  runSubTranslation(langName);
 }
 
 async function onSubTranslateClick(event) {
@@ -1074,8 +1126,7 @@ async function onSubTranslateClick(event) {
   const text = selectedLayoutText || getSelectedLayoutText();
   if (!text) return;
   if (subTranslatePopover) subTranslatePopover.hidden = false;
-
-  populateSubTransLanguages();
+  if (subTransDropdown) subTransDropdown.hidden = true;
 
   // Find associated original text if selecting inside a block
   const selection = window.getSelection();
@@ -1106,8 +1157,9 @@ async function onSubTranslateClick(event) {
     defaultTarget = current.sourceLanguage;
   }
 
-  if (subTransLangSelect) {
-    subTransLangSelect.value = defaultTarget;
+  currentSubTargetLanguage = defaultTarget;
+  if (subTransLangText) {
+    subTransLangText.textContent = defaultTarget;
   }
 
   positionSubTranslatePopover();
