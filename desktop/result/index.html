@@ -206,13 +206,20 @@
     </button>
     <div id="subTranslatePopover" class="sub-translate-popover" hidden>
       <div class="sub-trans-header">
-        <span id="subTransLang">Bản dịch nhanh</span>
-        <button id="subTransClose" type="button" class="sub-trans-close">✕</button>
+        <div class="sub-trans-picker-group">
+          <span class="sub-trans-picker-label">Dịch sang:</span>
+          <select id="subTransLangSelect" class="sub-trans-select" title="Chọn ngôn ngữ đích cho cụm này"></select>
+        </div>
+        <button id="subTransClose" type="button" class="sub-trans-close" title="Đóng">✕</button>
+      </div>
+      <div id="subTransOrigRow" class="sub-trans-orig-row" hidden>
+        <span class="sub-trans-tag">Gốc:</span>
+        <span id="subTransOrigText" class="sub-trans-orig-text"></span>
       </div>
       <div id="subTransBody" class="sub-trans-body">Đang dịch…</div>
       <div class="sub-trans-footer">
         <button id="subTransCopy" type="button" class="sub-trans-btn">📋 Sao chép</button>
-        <button id="subTransSpeak" type="button" class="sub-trans-btn">🔊 Nghe</button>
+        <button id="subTransSpeak" type="button" class="sub-trans-btn">🔊 Nghe đọc</button>
       </div>
     </div>
   </div>

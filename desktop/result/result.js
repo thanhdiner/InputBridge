@@ -48,8 +48,10 @@ const selectionToolbar = document.getElementById("selectionToolbar");
 const copySelectionButton = document.getElementById("copySelectionButton");
 const translateSelectionButton = document.getElementById("translateSelectionButton");
 const subTranslatePopover = document.getElementById("subTranslatePopover");
-const subTransLang = document.getElementById("subTransLang");
+const subTransLangSelect = document.getElementById("subTransLangSelect");
 const subTransClose = document.getElementById("subTransClose");
+const subTransOrigRow = document.getElementById("subTransOrigRow");
+const subTransOrigText = document.getElementById("subTransOrigText");
 const subTransBody = document.getElementById("subTransBody");
 const subTransCopy = document.getElementById("subTransCopy");
 const subTransSpeak = document.getElementById("subTransSpeak");
@@ -666,6 +668,7 @@ function renderSelectableText(blocks, imageWidth, imageHeight) {
     const item = document.createElement("span");
     item.className = "selectable-text";
     item.textContent = text;
+    item.dataset.original = String(block.original || block.text || "");
     item.dataset.fontSize = String(block.fontSize || 12);
     item.dataset.lineHeight = String(block.lineHeight || 14);
     item.style.left = `${clamp(Number(block.x || 0) / imageWidth * 100, 0, 100)}%`;
@@ -968,21 +971,27 @@ async function onCropCopy() {
 let currentSubTranslation = "";
 
 function initSubTranslate() {
+  populateSubTransLanguages();
   subTransClose?.addEventListener("click", () => {
     if (subTranslatePopover) subTranslatePopover.hidden = true;
+  });
+  subTransLangSelect?.addEventListener("change", () => {
+    const target = subTransLangSelect.value;
+    runSubTranslation(target);
   });
   subTransCopy?.addEventListener("click", async () => {
     if (!currentSubTranslation) return;
     await window.inputBridge.copyResult(currentSubTranslation);
+    const origText = subTransCopy.textContent;
     subTransCopy.textContent = "Đã sao chép";
-    setTimeout(() => { subTransCopy.textContent = "📋 Sao chép"; }, 1200);
+    setTimeout(() => { if (subTransCopy) subTransCopy.textContent = origText; }, 1200);
   });
   subTransSpeak?.addEventListener("click", async () => {
     if (!currentSubTranslation) return;
     try {
       const res = await window.inputBridge.speakResult({
         text: currentSubTranslation,
-        locale: current?.targetLanguage || "vi-VN"
+        locale: subTransLangSelect?.value || current?.targetLanguage || "vi-VN"
       });
       if (res?.audioBase64) {
         if (currentAudio) currentAudio.pause();
@@ -993,19 +1002,74 @@ function initSubTranslate() {
   });
 }
 
+function populateSubTransLanguages() {
+  if (!subTransLangSelect || subTransLangSelect.children.length > 0) return;
+  subTransLangSelect.innerHTML = "";
+  const langs = (availableLanguages && availableLanguages.length) ? availableLanguages : POPULAR_LANGUAGES;
+  for (const item of langs) {
+    const opt = document.createElement("option");
+    opt.value = item.name;
+    opt.textContent = item.name;
+    subTransLangSelect.appendChild(opt);
+  }
+}
+
 async function onSubTranslateClick() {
   const text = selectedLayoutText || getSelectedLayoutText();
   if (!text) return;
   if (subTranslatePopover) subTranslatePopover.hidden = false;
+
+  populateSubTransLanguages();
+
+  // Find associated original text if selecting inside a block
+  const selection = window.getSelection();
+  let origText = "";
+  if (selection && selection.rangeCount) {
+    const node = selection.anchorNode?.nodeType === Node.ELEMENT_NODE ? selection.anchorNode : selection.anchorNode?.parentElement;
+    const anchor = node?.closest(".selectable-text");
+    if (anchor && anchor.dataset.original) {
+      origText = anchor.dataset.original.trim();
+    }
+  }
+
+  if (origText && origText.toLowerCase() !== text.toLowerCase()) {
+    if (subTransOrigRow) subTransOrigRow.hidden = false;
+    if (subTransOrigText) subTransOrigText.textContent = origText;
+  } else {
+    if (subTransOrigRow) subTransOrigRow.hidden = true;
+  }
+
+  // Determine smart default target language
+  const currentAppTarget = current?.targetLanguage || "Vietnamese";
+  let defaultTarget = "English";
+  if (currentAppTarget.toLowerCase() === "english") {
+    defaultTarget = "Vietnamese";
+  } else if (vietnameseEvidence(text).strong) {
+    defaultTarget = "English";
+  } else if (current?.sourceLanguage && current.sourceLanguage.toLowerCase() !== currentAppTarget.toLowerCase()) {
+    defaultTarget = current.sourceLanguage;
+  }
+
+  if (subTransLangSelect) {
+    subTransLangSelect.value = defaultTarget;
+  }
+
+  await runSubTranslation(defaultTarget);
+}
+
+async function runSubTranslation(targetLanguage) {
+  const text = selectedLayoutText || getSelectedLayoutText();
+  if (!text) return;
   if (subTransBody) subTransBody.textContent = "Đang dịch…";
-  if (subTransLang) subTransLang.textContent = `Dịch sang ${current?.targetLanguage || "Tiếng Việt"}`;
 
   try {
-    const res = await window.inputBridge.translateText(text);
+    const res = await window.inputBridge.translateText({
+      text,
+      targetLanguage: targetLanguage || "English"
+    });
     if (res?.ok && res.translation) {
       currentSubTranslation = res.translation;
       if (subTransBody) subTransBody.textContent = res.translation;
-      if (subTransLang) subTransLang.textContent = `${res.sourceLanguage || "Tự động"} → ${res.targetLanguage || "Tiếng Việt"}`;
     } else {
       if (subTransBody) subTransBody.textContent = "Không dịch được cụm chữ này.";
     }

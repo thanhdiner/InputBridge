@@ -1259,10 +1259,13 @@ async function cropAndProcessCapture(payload) {
   return { ok: true };
 }
 
-async function translateSelectedText(text) {
+async function translateSelectedText(payload) {
+  const text = typeof payload === "string" ? payload : payload?.text;
   const str = String(text || "").trim();
   if (!str) return { ok: false, error: "Không có văn bản để dịch." };
-  const targetLang = latestResult?.targetLanguage || settings.targetLanguage || "Vietnamese";
+  const targetLang = (typeof payload === "object" && payload?.targetLanguage)
+    ? payload.targetLanguage
+    : (latestResult?.targetLanguage || settings.targetLanguage || "Vietnamese");
   const sessionSettings = { ...settings, targetLanguage: targetLang };
   const result = await translateText(str, sessionSettings);
   return {
