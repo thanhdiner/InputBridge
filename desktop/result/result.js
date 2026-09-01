@@ -937,6 +937,37 @@ function updateCropBox(x, y, width, height) {
   cropBox.style.width = `${Math.round(width)}px`;
   cropBox.style.height = `${Math.round(height)}px`;
 
+  const stageH = canvasStage.clientHeight || 1;
+  const spaceBelow = stageH - (y + height);
+
+  // Position Crop Actions HUD: Flip to top if not enough space below
+  if (cropActionsHud) {
+    if (spaceBelow < 45) {
+      if (y > 42) {
+        cropActionsHud.style.top = "-38px";
+        cropActionsHud.style.bottom = "auto";
+      } else {
+        cropActionsHud.style.bottom = "8px";
+        cropActionsHud.style.top = "auto";
+      }
+    } else {
+      cropActionsHud.style.bottom = "-40px";
+      cropActionsHud.style.top = "auto";
+    }
+  }
+
+  // Dimension Badge: Flip inside if near top
+  const dimBadge = cropBox.querySelector(".crop-dim-badge");
+  if (dimBadge) {
+    if (y < 28) {
+      dimBadge.style.top = "4px";
+      dimBadge.style.left = "4px";
+    } else {
+      dimBadge.style.top = "-24px";
+      dimBadge.style.left = "0px";
+    }
+  }
+
   const scaleX = layoutImageWidth / (canvasStage.clientWidth || 1);
   const scaleY = layoutImageHeight / (canvasStage.clientHeight || 1);
   const origW = Math.round(width * scaleX);
@@ -964,13 +995,24 @@ async function onCropTranslate() {
     height: Math.max(10, Math.round(currentCropRect.height * scaleY))
   };
 
+  // Render pristine crop sub-image from original canvas for maximum sharpness
+  let dataUrl = null;
+  if (originalCanvas) {
+    const subCanvas = document.createElement("canvas");
+    subCanvas.width = imageRect.width;
+    subCanvas.height = imageRect.height;
+    const ctx = subCanvas.getContext("2d");
+    ctx.drawImage(originalCanvas, imageRect.x, imageRect.y, imageRect.width, imageRect.height, 0, 0, imageRect.width, imageRect.height);
+    dataUrl = subCanvas.toDataURL("image/png");
+  }
+
   closeCropHud();
   setInteractionMode("select");
   loading.hidden = false;
   loadingText.textContent = "Đang nhận dạng và dịch vùng chọn…";
 
   try {
-    await window.inputBridge.cropAndProcess({ cropRect: imageRect });
+    await window.inputBridge.cropAndProcess({ dataUrl, cropRect: imageRect });
   } catch (error) {
     console.error("Crop translate failed:", error);
   } finally {

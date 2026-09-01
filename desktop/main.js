@@ -1253,8 +1253,19 @@ async function cropAndProcessCapture(payload) {
   const croppedSize = cropped.getSize();
   adjustResultWindowSize(croppedSize);
 
+  // If cropped region is small, upscale with high quality so OCR engines can recognize small text
+  let ocrImage = cropped;
+  if (croppedSize.width < 350 || croppedSize.height < 140) {
+    const scale = Math.min(4, Math.max(2, Math.ceil(350 / Math.max(1, croppedSize.width))));
+    ocrImage = cropped.resize({
+      width: Math.round(croppedSize.width * scale),
+      height: Math.round(croppedSize.height * scale),
+      quality: "best"
+    });
+  }
+
   const tempPath = path.join(app.getPath("temp"), `ib_crop_${Date.now()}.png`);
-  await fsp.writeFile(tempPath, cropped.toPNG());
+  await fsp.writeFile(tempPath, ocrImage.toPNG());
   processCaptureLayout(tempPath, cropped);
   return { ok: true };
 }
