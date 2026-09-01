@@ -39,12 +39,29 @@ const zoomInButton = document.getElementById("zoomInButton");
 const fitWidthButton = document.getElementById("fitWidthButton");
 const fitPageButton = document.getElementById("fitPageButton");
 const selectTextButton = document.getElementById("selectTextButton");
+const cropButton = document.getElementById("cropButton");
 const drawButton = document.getElementById("drawButton");
 const eraseButton = document.getElementById("eraseButton");
 const clearDrawingButton = document.getElementById("clearDrawingButton");
 const resultTitle = document.getElementById("resultTitle");
 const selectionToolbar = document.getElementById("selectionToolbar");
 const copySelectionButton = document.getElementById("copySelectionButton");
+const translateSelectionButton = document.getElementById("translateSelectionButton");
+const subTranslatePopover = document.getElementById("subTranslatePopover");
+const subTransLang = document.getElementById("subTransLang");
+const subTransClose = document.getElementById("subTransClose");
+const subTransBody = document.getElementById("subTransBody");
+const subTransCopy = document.getElementById("subTransCopy");
+const subTransSpeak = document.getElementById("subTransSpeak");
+
+const cropOverlay = document.getElementById("cropOverlay");
+const cropBox = document.getElementById("cropBox");
+const cropDimText = document.getElementById("cropDimText");
+const cropActionsHud = document.getElementById("cropActionsHud");
+const cropTranslateBtn = document.getElementById("cropTranslateBtn");
+const cropCopyBtn = document.getElementById("cropCopyBtn");
+const cropCancelBtn = document.getElementById("cropCancelBtn");
+
 const compareHandle = document.getElementById("compareHandle");
 const compareToggleButton = document.getElementById("compareToggleButton");
 const compareToggleText = document.getElementById("compareToggleText");
@@ -115,11 +132,19 @@ async function init() {
   fitWidthButton?.addEventListener("click", () => setZoom(1));
   fitPageButton?.addEventListener("click", fitPage);
   selectTextButton.addEventListener("click", () => setInteractionMode("select"));
+  cropButton?.addEventListener("click", () => setInteractionMode("crop"));
   drawButton.addEventListener("click", () => setInteractionMode("draw"));
   eraseButton.addEventListener("click", () => setInteractionMode("erase"));
   clearDrawingButton.addEventListener("click", clearDrawing);
+
+  initCropInteractions();
+  initSubTranslate();
+
   copySelectionButton.addEventListener("pointerdown", (event) => event.preventDefault());
   copySelectionButton.addEventListener("click", copySelectedLayoutText);
+  translateSelectionButton?.addEventListener("pointerdown", (event) => event.preventDefault());
+  translateSelectionButton?.addEventListener("click", onSubTranslateClick);
+
   drawingCanvas.addEventListener("pointerdown", onDrawStart);
   drawingCanvas.addEventListener("pointermove", onDrawMove);
   drawingCanvas.addEventListener("pointerup", onDrawEnd);
@@ -769,6 +794,224 @@ function onSelectionShortcut(event) {
   event.preventDefault();
   selectedLayoutText = text;
   void copySelectedLayoutText();
+}
+
+function setInteractionMode(mode) {
+  interactionMode = mode;
+  selectTextButton?.classList.toggle("active", mode === "select");
+  cropButton?.classList.toggle("active", mode === "crop");
+  drawButton?.classList.toggle("active", mode === "draw");
+  eraseButton?.classList.toggle("active", mode === "erase");
+
+  selectTextButton?.setAttribute("aria-selected", String(mode === "select"));
+  cropButton?.setAttribute("aria-selected", String(mode === "crop"));
+  drawButton?.setAttribute("aria-selected", String(mode === "draw"));
+  eraseButton?.setAttribute("aria-selected", String(mode === "erase"));
+
+  canvasWrap.className = `canvas-wrap mode-${mode}`;
+  if (cropOverlay) cropOverlay.hidden = mode !== "crop";
+  if (mode !== "crop") {
+    closeCropHud();
+  }
+  if (mode !== "select") {
+    hideSelectionToolbar();
+  }
+}
+
+let isCropping = false;
+let cropStart = null;
+let currentCropRect = null;
+
+function initCropInteractions() {
+  if (!cropOverlay) return;
+  cropOverlay.addEventListener("pointerdown", onCropPointerDown);
+  cropOverlay.addEventListener("pointermove", onCropPointerMove);
+  cropOverlay.addEventListener("pointerup", onCropPointerUp);
+  cropOverlay.addEventListener("pointercancel", onCropPointerUp);
+
+  cropTranslateBtn?.addEventListener("click", onCropTranslate);
+  cropCopyBtn?.addEventListener("click", onCropCopy);
+  cropCancelBtn?.addEventListener("click", closeCropHud);
+}
+
+function onCropPointerDown(event) {
+  if (interactionMode !== "crop") return;
+  if (event.target.closest(".crop-actions-hud")) return;
+  isCropping = true;
+  if (cropActionsHud) cropActionsHud.hidden = true;
+  const stageRect = canvasStage.getBoundingClientRect();
+  cropStart = {
+    x: clamp(event.clientX - stageRect.left, 0, stageRect.width),
+    y: clamp(event.clientY - stageRect.top, 0, stageRect.height)
+  };
+  if (cropBox) cropBox.hidden = false;
+  updateCropBox(cropStart.x, cropStart.y, 0, 0);
+  cropOverlay.setPointerCapture(event.pointerId);
+  event.preventDefault();
+}
+
+function onCropPointerMove(event) {
+  if (!isCropping || !cropStart) return;
+  const stageRect = canvasStage.getBoundingClientRect();
+  const currentX = clamp(event.clientX - stageRect.left, 0, stageRect.width);
+  const currentY = clamp(event.clientY - stageRect.top, 0, stageRect.height);
+
+  const x = Math.min(cropStart.x, currentX);
+  const y = Math.min(cropStart.y, currentY);
+  const width = Math.abs(currentX - cropStart.x);
+  const height = Math.abs(currentY - cropStart.y);
+
+  updateCropBox(x, y, width, height);
+  event.preventDefault();
+}
+
+function onCropPointerUp(event) {
+  if (!isCropping) return;
+  isCropping = false;
+  if (cropOverlay.hasPointerCapture(event.pointerId)) {
+    cropOverlay.releasePointerCapture(event.pointerId);
+  }
+  if (!currentCropRect || currentCropRect.width < 12 || currentCropRect.height < 12) {
+    closeCropHud();
+    return;
+  }
+  if (cropActionsHud) cropActionsHud.hidden = false;
+}
+
+function updateCropBox(x, y, width, height) {
+  currentCropRect = { x, y, width, height };
+  if (!cropBox) return;
+  cropBox.style.left = `${Math.round(x)}px`;
+  cropBox.style.top = `${Math.round(y)}px`;
+  cropBox.style.width = `${Math.round(width)}px`;
+  cropBox.style.height = `${Math.round(height)}px`;
+
+  const scaleX = layoutImageWidth / (canvasStage.clientWidth || 1);
+  const scaleY = layoutImageHeight / (canvasStage.clientHeight || 1);
+  const origW = Math.round(width * scaleX);
+  const origH = Math.round(height * scaleY);
+  if (cropDimText) cropDimText.textContent = `${origW} × ${origH}`;
+}
+
+function closeCropHud() {
+  if (cropBox) cropBox.hidden = true;
+  if (cropActionsHud) cropActionsHud.hidden = true;
+  currentCropRect = null;
+}
+
+async function onCropTranslate() {
+  if (!currentCropRect || !layoutImageWidth || !layoutImageHeight) return;
+  const stageW = canvasStage.clientWidth || 1;
+  const stageH = canvasStage.clientHeight || 1;
+  const scaleX = layoutImageWidth / stageW;
+  const scaleY = layoutImageHeight / stageH;
+
+  const imageRect = {
+    x: Math.max(0, Math.round(currentCropRect.x * scaleX)),
+    y: Math.max(0, Math.round(currentCropRect.y * scaleY)),
+    width: Math.max(10, Math.round(currentCropRect.width * scaleX)),
+    height: Math.max(10, Math.round(currentCropRect.height * scaleY))
+  };
+
+  closeCropHud();
+  setInteractionMode("select");
+  loading.hidden = false;
+  loadingText.textContent = "Đang nhận dạng và dịch vùng chọn…";
+
+  try {
+    await window.inputBridge.cropAndProcess({ cropRect: imageRect });
+  } catch (error) {
+    console.error("Crop translate failed:", error);
+  } finally {
+    loading.hidden = true;
+  }
+}
+
+async function onCropCopy() {
+  if (!currentCropRect || !layoutImageWidth || !layoutImageHeight) return;
+  const stageW = canvasStage.clientWidth || 1;
+  const stageH = canvasStage.clientHeight || 1;
+  const scaleX = layoutImageWidth / stageW;
+  const scaleY = layoutImageHeight / stageH;
+
+  const sx = Math.max(0, Math.round(currentCropRect.x * scaleX));
+  const sy = Math.max(0, Math.round(currentCropRect.y * scaleY));
+  const sw = Math.max(1, Math.round(currentCropRect.width * scaleX));
+  const sh = Math.max(1, Math.round(currentCropRect.height * scaleY));
+
+  const subCanvas = document.createElement("canvas");
+  subCanvas.width = sw;
+  subCanvas.height = sh;
+  const ctx = subCanvas.getContext("2d");
+  if (originalCanvas) {
+    ctx.drawImage(originalCanvas, sx, sy, sw, sh, 0, 0, sw, sh);
+  }
+  if (layoutCanvas) {
+    ctx.drawImage(layoutCanvas, sx, sy, sw, sh, 0, 0, sw, sh);
+  }
+  if (drawingCanvas) {
+    ctx.drawImage(drawingCanvas, sx, sy, sw, sh, 0, 0, sw, sh);
+  }
+
+  const dataUrl = subCanvas.toDataURL("image/png");
+  const result = await window.inputBridge.copyResultImage(dataUrl);
+  if (result?.ok) {
+    const origSpan = cropCopyBtn.querySelector("span");
+    const origText = origSpan ? origSpan.textContent : "Sao chép";
+    if (origSpan) origSpan.textContent = "Đã sao chép!";
+    setTimeout(() => {
+      if (origSpan) origSpan.textContent = origText;
+    }, 1200);
+  }
+}
+
+let currentSubTranslation = "";
+
+function initSubTranslate() {
+  subTransClose?.addEventListener("click", () => {
+    if (subTranslatePopover) subTranslatePopover.hidden = true;
+  });
+  subTransCopy?.addEventListener("click", async () => {
+    if (!currentSubTranslation) return;
+    await window.inputBridge.copyResult(currentSubTranslation);
+    subTransCopy.textContent = "Đã sao chép";
+    setTimeout(() => { subTransCopy.textContent = "📋 Sao chép"; }, 1200);
+  });
+  subTransSpeak?.addEventListener("click", async () => {
+    if (!currentSubTranslation) return;
+    try {
+      const res = await window.inputBridge.speakResult({
+        text: currentSubTranslation,
+        locale: current?.targetLanguage || "vi-VN"
+      });
+      if (res?.audioBase64) {
+        if (currentAudio) currentAudio.pause();
+        currentAudio = new Audio(`data:${res.contentType};base64,${res.audioBase64}`);
+        currentAudio.play();
+      }
+    } catch {}
+  });
+}
+
+async function onSubTranslateClick() {
+  const text = selectedLayoutText || getSelectedLayoutText();
+  if (!text) return;
+  if (subTranslatePopover) subTranslatePopover.hidden = false;
+  if (subTransBody) subTransBody.textContent = "Đang dịch…";
+  if (subTransLang) subTransLang.textContent = `Dịch sang ${current?.targetLanguage || "Tiếng Việt"}`;
+
+  try {
+    const res = await window.inputBridge.translateText(text);
+    if (res?.ok && res.translation) {
+      currentSubTranslation = res.translation;
+      if (subTransBody) subTransBody.textContent = res.translation;
+      if (subTransLang) subTransLang.textContent = `${res.sourceLanguage || "Tự động"} → ${res.targetLanguage || "Tiếng Việt"}`;
+    } else {
+      if (subTransBody) subTransBody.textContent = "Không dịch được cụm chữ này.";
+    }
+  } catch (error) {
+    if (subTransBody) subTransBody.textContent = error?.message || "Lỗi khi dịch.";
+  }
 }
 
 function clearDrawing() {

@@ -59,6 +59,10 @@
             <svg class="tab-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/></svg>
             <span class="tab-label">Chọn</span>
           </button>
+          <button id="cropButton" type="button" role="tab" aria-selected="false" title="Cắt & Dịch tập trung vùng con (C)">
+            <svg class="tab-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>
+            <span class="tab-label">Cắt</span>
+          </button>
           <button id="drawButton" type="button" role="tab" aria-selected="false" title="Vẽ lên ảnh (P)">
             <svg class="tab-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg>
             <span class="tab-label">Vẽ</span>
@@ -133,6 +137,22 @@
           </div>
           <div id="readingHighlight" class="reading-highlight" hidden></div>
           <canvas id="drawingCanvas" class="drawing-canvas"></canvas>
+          <div id="cropOverlay" class="crop-overlay" hidden>
+            <div id="cropBox" class="crop-box" hidden>
+              <div class="crop-dim-badge"><span id="cropDimText">0 × 0</span></div>
+              <div class="crop-actions-hud" id="cropActionsHud">
+                <button id="cropTranslateBtn" type="button" class="hud-btn primary" title="Dịch tập trung riêng vùng này">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
+                  <span>Dịch vùng này</span>
+                </button>
+                <button id="cropCopyBtn" type="button" class="hud-btn" title="Sao chép ảnh vùng chọn">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  <span>Sao chép</span>
+                </button>
+                <button id="cropCancelBtn" type="button" class="hud-btn close" title="Hủy chọn (Esc)">✕</button>
+              </div>
+            </div>
+          </div>
           <button id="compareHandle" class="compare-handle" type="button" role="slider" aria-label="Kéo để so sánh ảnh gốc và ảnh đã dịch" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden>
             <div class="compare-knob">
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -171,13 +191,30 @@
     </section>
   </main>
   <div id="selectionToolbar" class="selection-toolbar" role="toolbar" aria-label="Thao tác với chữ đã chọn" hidden>
+    <button id="translateSelectionButton" type="button" data-tooltip="Dịch riêng chữ đã chọn" aria-label="Dịch riêng cụm chữ đã chọn">
+      <svg class="btn-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>
+      </svg>
+      <strong>Dịch</strong>
+    </button>
     <button id="copySelectionButton" type="button" data-tooltip="Sao chép bằng Ctrl+C" aria-label="Sao chép chữ đã chọn. Phím tắt Ctrl+C">
-      <svg class="btn-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+      <svg class="btn-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
         <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
         <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
       </svg>
       <strong>Sao chép</strong>
     </button>
+    <div id="subTranslatePopover" class="sub-translate-popover" hidden>
+      <div class="sub-trans-header">
+        <span id="subTransLang">Bản dịch nhanh</span>
+        <button id="subTransClose" type="button" class="sub-trans-close">✕</button>
+      </div>
+      <div id="subTransBody" class="sub-trans-body">Đang dịch…</div>
+      <div class="sub-trans-footer">
+        <button id="subTransCopy" type="button" class="sub-trans-btn">📋 Sao chép</button>
+        <button id="subTransSpeak" type="button" class="sub-trans-btn">🔊 Nghe</button>
+      </div>
+    </div>
   </div>
   <script src="result.js"></script>
 </body>

@@ -697,26 +697,125 @@ button.traffic:hover { filter: brightness(.9); }
   text-align: center;
 }
 .canvas-wrap.mode-select .text-layer { pointer-events: auto; }
+.canvas-wrap.mode-crop .text-layer,
 .canvas-wrap.mode-draw .text-layer,
 .canvas-wrap.mode-erase .text-layer { pointer-events: none; }
+.canvas-wrap.mode-crop .crop-overlay { pointer-events: auto; }
 .canvas-wrap.mode-draw .drawing-canvas,
 .canvas-wrap.mode-erase .drawing-canvas { pointer-events: auto; }
+.canvas-wrap.mode-crop { cursor: crosshair; }
 .canvas-wrap.mode-draw .drawing-canvas { cursor: crosshair; }
 .canvas-wrap.mode-erase .drawing-canvas { cursor: cell; }
 .canvas-wrap.is-panning { cursor: grabbing; }
 .canvas-wrap.is-panning .canvas-stage { cursor: grabbing; }
+
+/* Crop Overlay & Floating HUD */
+.crop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  pointer-events: none;
+}
+.crop-box {
+  position: absolute;
+  border: 2px solid #007aff;
+  box-shadow: 0 0 0 9999px rgba(15, 23, 42, 0.42), 0 4px 20px rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
+  touch-action: none;
+  border-radius: 4px;
+}
+.crop-dim-badge {
+  position: absolute;
+  top: -24px;
+  left: 0;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(15, 23, 42, 0.85);
+  color: #fff;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+}
+.crop-actions-hud {
+  position: absolute;
+  bottom: -40px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3.5px 6px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(80, 96, 130, 0.2);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.25), 0 2px 6px rgba(15, 23, 42, 0.1);
+  white-space: nowrap;
+  z-index: 20;
+  animation: popoverFadeIn 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
 
 .selection-toolbar {
   position: fixed;
   z-index: 20;
   display: flex;
   align-items: center;
+  animation: popoverFadeIn 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.hud-btn {
+  display: inline-flex;
+  align-items: center;
   gap: 4px;
-  padding: 4px;
-  border: 1px solid rgba(74,85,105,.16);
-  border-radius: 10px;
-  color: #273247;
-  background: rgba(250,251,253,.9);
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 99px;
+  border: 1px solid rgba(80, 96, 130, 0.16);
+  background: #fff;
+  color: #334155;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+.hud-btn:hover {
+  background: #f0f6ff;
+  color: #007aff;
+  border-color: rgba(0, 122, 255, 0.3);
+}
+.hud-btn.primary {
+  background: #007aff;
+  color: #fff;
+  border-color: #007aff;
+  box-shadow: 0 2px 8px rgba(0, 122, 255, 0.35);
+}
+.hud-btn.primary:hover {
+  background: #006ee6;
+}
+.hud-btn.close {
+  width: 24px;
+  padding: 0;
+  justify-content: center;
+  color: #64748b;
+}
+.hud-btn.close:hover {
+  color: #ef4444;
+  background: #fef2f2;
+}
+
+.selection-toolbar {
+  position: absolute;
+  z-index: 25;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid rgba(94,109,139,.18);
+  border-radius: 9px;
+  background: rgba(255,255,255,.94);
   box-shadow:
     0 8px 24px rgba(31,42,61,.18),
     0 2px 6px rgba(31,42,61,.1),
@@ -727,20 +826,20 @@ button.traffic:hover { filter: brightness(.9); }
 .selection-toolbar button {
   position: relative;
   display: inline-flex;
-  min-height: 28px;
+  min-height: 26px;
   align-items: center;
-  gap: 6px;
-  padding: 0 8px;
+  gap: 5px;
+  padding: 0 7px;
   border: 0;
   border-radius: 6px;
   color: #273247;
   cursor: pointer;
   background: transparent;
-  font-size: 10.5px;
+  font-size: 10px;
 }
 .selection-toolbar button:hover { background: rgba(0,122,255,.1); }
 .selection-toolbar button:active { background: rgba(0,122,255,.16); }
-.selection-toolbar button span { color: #007aff; font-size: 14px; }
+.selection-toolbar button span { color: #007aff; font-size: 13px; }
 .selection-toolbar button strong { font-weight: 600; }
 .selection-toolbar button[data-tooltip]::before,
 .selection-toolbar button[data-tooltip]::after {
@@ -757,9 +856,9 @@ button.traffic:hover { filter: brightness(.9); }
   bottom: calc(100% + 9px);
   width: max-content;
   max-width: 180px;
-  padding: 6px 8px;
+  padding: 5px 7px;
   border: 1px solid rgba(255,255,255,.14);
-  border-radius: 7px;
+  border-radius: 6px;
   color: #fff;
   background: rgba(30,36,48,.94);
   box-shadow: 0 6px 18px rgba(16,22,34,.22);
@@ -792,6 +891,77 @@ button.traffic:hover { filter: brightness(.9); }
   transform: translate(-50%, 0) rotate(45deg);
 }
 .selection-toolbar.is-copied button span { color: #28a65a; }
+
+/* Sub-Translate Popover */
+.sub-translate-popover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 220px;
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid rgba(80, 96, 130, 0.18);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.22);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 100;
+  animation: popoverFadeIn 0.15s ease;
+}
+.sub-trans-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 8.5px;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+}
+.sub-trans-close {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  color: #94a3b8;
+  font-size: 11px;
+  padding: 0 2px;
+}
+.sub-trans-close:hover { color: #334155; }
+.sub-trans-body {
+  font-size: 12px;
+  line-height: 1.45;
+  color: #1e293b;
+  font-weight: 550;
+  max-height: 100px;
+  overflow-y: auto;
+  user-select: text;
+  white-space: pre-wrap;
+}
+.sub-trans-footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+.sub-trans-btn {
+  padding: 3px 7px;
+  border-radius: 5px;
+  border: 1px solid rgba(80, 96, 130, 0.14);
+  background: #fff;
+  font-size: 9.5px;
+  font-weight: 600;
+  color: #475569;
+  cursor: pointer;
+  transition: all 0.1s ease;
+}
+.sub-trans-btn:hover {
+  background: #f0f6ff;
+  color: #007aff;
+  border-color: rgba(0, 122, 255, 0.3);
+}
 
 .text-block {
   margin: 13px 16px 0;

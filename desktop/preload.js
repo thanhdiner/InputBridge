@@ -22,6 +22,8 @@ contextBridge.exposeInMainWorld("inputBridge", {
   closeResult: () => ipcRenderer.invoke("result:close"),
   recapture: () => ipcRenderer.invoke("result:recapture"),
   retranslateResult: (targetLanguage) => ipcRenderer.invoke("result:retranslate", targetLanguage),
+  cropAndProcess: (payload) => ipcRenderer.invoke("result:crop-and-process", payload),
+  translateText: (text) => ipcRenderer.invoke("result:translate-text", text),
   speakResult: (payload) => ipcRenderer.invoke("result:speak", payload),
   showMain: () => ipcRenderer.invoke("app:show-main"),
   onSelectionModeUpdated: (callback) => {

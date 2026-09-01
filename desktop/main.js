@@ -1231,6 +1231,48 @@ async function retranslateCapture(targetLanguage) {
   }
 }
 
+async function cropAndProcessCapture(payload) {
+  const dataUrl = payload?.dataUrl;
+  let cropped;
+  if (dataUrl) {
+    cropped = nativeImage.createFromDataURL(dataUrl);
+  } else if (payload?.cropRect && latestResult?.layoutImageDataUrl) {
+    const baseImg = nativeImage.createFromDataURL(latestResult.layoutImageDataUrl);
+    const { x, y, width, height } = payload.cropRect;
+    cropped = baseImg.crop({
+      x: Math.max(0, Math.round(x)),
+      y: Math.max(0, Math.round(y)),
+      width: Math.max(1, Math.round(width)),
+      height: Math.max(1, Math.round(height))
+    });
+  }
+  if (!cropped || cropped.isEmpty()) {
+    return { ok: false, error: "Ảnh vùng chọn không hợp lệ." };
+  }
+
+  const croppedSize = cropped.getSize();
+  adjustResultWindowSize(croppedSize);
+
+  const tempPath = path.join(app.getPath("temp"), `ib_crop_${Date.now()}.png`);
+  await fsp.writeFile(tempPath, cropped.toPNG());
+  processCaptureLayout(tempPath, cropped);
+  return { ok: true };
+}
+
+async function translateSelectedText(text) {
+  const str = String(text || "").trim();
+  if (!str) return { ok: false, error: "Không có văn bản để dịch." };
+  const targetLang = latestResult?.targetLanguage || settings.targetLanguage || "Vietnamese";
+  const sessionSettings = { ...settings, targetLanguage: targetLang };
+  const result = await translateText(str, sessionSettings);
+  return {
+    ok: true,
+    translation: result.result,
+    sourceLanguage: result.detectedSourceLanguage,
+    targetLanguage: result.targetLanguage
+  };
+}
+
 function cleanOcrText(text) {
   return String(text || "")
     .replace(/^[\s>|•*~—–\-_/\\()[\]{}:;=+,.]+/u, "")
@@ -1684,6 +1726,8 @@ function installIpcHandlers() {
     return beginCapture();
   });
   ipcMain.handle("result:retranslate", (_event, targetLanguage) => retranslateCapture(targetLanguage));
+  ipcMain.handle("result:crop-and-process", (_event, payload) => cropAndProcessCapture(payload));
+  ipcMain.handle("result:translate-text", (_event, text) => translateSelectedText(text));
   ipcMain.handle("result:speak", async (_event, payload) => {
     const text = String(payload?.text || "").trim();
     if (!text) throw new Error("Không có văn bản để đọc.");
