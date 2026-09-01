@@ -1544,6 +1544,14 @@ function calculateAdaptiveResultSize(display, rect, layoutMode) {
   return { width, height };
 }
 
+function adjustResultWindowSize(croppedSize) {
+  if (!resultWindow || resultWindow.isDestroyed()) return;
+  const currentBounds = resultWindow.getBounds();
+  const display = screen.getDisplayMatching(currentBounds);
+  const { width, height } = calculateAdaptiveResultSize(display, croppedSize, true);
+  resultWindow.setSize(width, height, true);
+}
+
 function getAdaptiveResultPosition(display, rect, width, height) {
   const work = display.workArea;
   if (!rect || !Number.isFinite(rect.x)) {
