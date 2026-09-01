@@ -5,13 +5,13 @@
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
-html, body { width: 100%; height: 100%; margin: 0; background: transparent; }
-body { padding: 8px; }
+html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; }
+body { padding: 8px; overflow: hidden; }
 button { font: inherit; }
 
 .card {
   height: 100%;
-  overflow: auto;
+  overflow: hidden;
   border: 1px solid rgba(255,255,255,.9);
   border-radius: 22px;
   background:

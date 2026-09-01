@@ -1082,6 +1082,18 @@ function toggleSubTransDropdown() {
     }
     const langs = availableLanguages && availableLanguages.length ? availableLanguages : POPULAR_LANGUAGES;
     renderSubTransLanguageList(langs);
+
+    const btnRect = subTransLangBtn ? subTransLangBtn.getBoundingClientRect() : null;
+    if (btnRect) {
+      const spaceBelow = window.innerHeight - btnRect.bottom - 12;
+      if (spaceBelow < 140) {
+        subTransDropdown.style.bottom = "calc(100% + 4px)";
+        subTransDropdown.style.top = "auto";
+      } else {
+        subTransDropdown.style.top = "calc(100% + 4px)";
+        subTransDropdown.style.bottom = "auto";
+      }
+    }
   }
 }
 
