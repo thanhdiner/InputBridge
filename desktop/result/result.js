@@ -764,12 +764,45 @@ function updateSelectionToolbar() {
   top = clamp(top, margin, Math.max(margin, window.innerHeight - toolbarRect.height - margin));
   selectionToolbar.style.left = `${Math.round(left)}px`;
   selectionToolbar.style.top = `${Math.round(top)}px`;
+  positionSubTranslatePopover();
+}
+
+function positionSubTranslatePopover() {
+  if (!subTranslatePopover || subTranslatePopover.hidden) return;
+  const toolbarRect = selectionToolbar.getBoundingClientRect();
+  const popoverH = subTranslatePopover.offsetHeight || 135;
+  const popoverW = subTranslatePopover.offsetWidth || 250;
+
+  // Check if there is enough space above the selection toolbar (accounting for titlebar ~48px)
+  const spaceAbove = toolbarRect.top - 48;
+  const placeBelow = spaceAbove < popoverH;
+
+  if (placeBelow) {
+    subTranslatePopover.style.top = "calc(100% + 8px)";
+    subTranslatePopover.style.bottom = "auto";
+  } else {
+    subTranslatePopover.style.bottom = "calc(100% + 8px)";
+    subTranslatePopover.style.top = "auto";
+  }
+
+  // Ensure horizontal alignment doesn't overflow screen left or right
+  const toolbarCenterX = toolbarRect.left + toolbarRect.width / 2;
+  const margin = 12;
+  const halfW = popoverW / 2;
+  let shiftX = 0;
+  if (toolbarCenterX - halfW < margin) {
+    shiftX = margin - (toolbarCenterX - halfW);
+  } else if (toolbarCenterX + halfW > window.innerWidth - margin) {
+    shiftX = (window.innerWidth - margin) - (toolbarCenterX + halfW);
+  }
+  subTranslatePopover.style.transform = `translateX(calc(-50% + ${Math.round(shiftX)}px))`;
 }
 
 function hideSelectionToolbar() {
   selectedLayoutText = "";
   selectionToolbar.hidden = true;
   selectionToolbar.classList.remove("is-copied");
+  if (subTranslatePopover) subTranslatePopover.hidden = true;
 }
 
 async function copySelectedLayoutText() {
@@ -1070,13 +1103,16 @@ async function onSubTranslateClick(event) {
     subTransLangSelect.value = defaultTarget;
   }
 
+  positionSubTranslatePopover();
   await runSubTranslation(defaultTarget);
+  positionSubTranslatePopover();
 }
 
 async function runSubTranslation(targetLanguage) {
   const text = selectedLayoutText || getSelectedLayoutText();
   if (!text) return;
   if (subTransBody) subTransBody.textContent = "Đang dịch…";
+  positionSubTranslatePopover();
 
   try {
     const res = await window.inputBridge.translateText({
@@ -1092,6 +1128,7 @@ async function runSubTranslation(targetLanguage) {
   } catch (error) {
     if (subTransBody) subTransBody.textContent = error?.message || "Lỗi khi dịch.";
   }
+  positionSubTranslatePopover();
 }
 
 function clearDrawing() {
