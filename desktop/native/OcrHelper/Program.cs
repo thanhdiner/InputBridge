@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Windows.Globalization;
 using Windows.Graphics.Imaging;
 using Windows.Media.Ocr;
 using Windows.Storage;
@@ -28,15 +27,6 @@ internal static class Program
             }
 
             var requestedLanguage = args.Length > 1 ? args[1]?.Trim() : string.Empty;
-            var engine = CreateEngine(requestedLanguage);
-            if (engine is null)
-            {
-                throw new InvalidOperationException(
-                    string.IsNullOrWhiteSpace(requestedLanguage)
-                        ? "Windows OCR is unavailable for the current user languages. Install an OCR language pack in Windows Settings."
-                        : $"Windows OCR language pack '{requestedLanguage}' is not installed."
-                );
-            }
 
             var file = await StorageFile.GetFileFromPathAsync(imagePath);
             await using var fileStream = await file.OpenStreamForReadAsync();
@@ -54,7 +44,8 @@ internal static class Program
 
             using (bitmap)
             {
-                var result = await engine.RecognizeAsync(bitmap);
+                var recognition = await OcrAutoDetector.RecognizeAsync(bitmap, requestedLanguage);
+                var result = recognition.Result;
                 var lines = result.Lines.Select(line => new
                 {
                     text = line.Text,
@@ -71,8 +62,9 @@ internal static class Program
                 var payload = new
                 {
                     ok = true,
-                    text = NormalizeText(result.Text),
-                    language = engine.RecognizerLanguage.LanguageTag,
+                    text = recognition.Text,
+                    language = recognition.Engine.RecognizerLanguage.LanguageTag,
+                    detection = recognition.Detection,
                     sourceWidth = decoder.PixelWidth,
                     sourceHeight = decoder.PixelHeight,
                     processedWidth = bitmap.PixelWidth,
@@ -98,24 +90,6 @@ internal static class Program
         }
     }
 
-    private static OcrEngine? CreateEngine(string? languageTag)
-    {
-        if (!string.IsNullOrWhiteSpace(languageTag) &&
-            !languageTag.Equals("auto", StringComparison.OrdinalIgnoreCase))
-        {
-            try
-            {
-                return OcrEngine.TryCreateFromLanguage(new Language(languageTag));
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
-        return OcrEngine.TryCreateFromUserProfileLanguages();
-    }
-
     private static BitmapTransform BuildScaleTransform(uint width, uint height)
     {
         var transform = new BitmapTransform();
@@ -133,16 +107,4 @@ internal static class Program
         return transform;
     }
 
-    private static string NormalizeText(string? value)
-    {
-        return string.Join(
-            Environment.NewLine,
-            (value ?? string.Empty)
-                .Replace("\r\n", "\n")
-                .Replace('\r', '\n')
-                .Split('\n')
-                .Select(line => line.Trim())
-                .Where(line => line.Length > 0)
-        ).Trim();
-    }
 }

@@ -2,7 +2,9 @@ const loading = document.getElementById("loading");
 const loadingText = document.getElementById("loadingText");
 const preview = document.getElementById("preview");
 const layoutBlock = document.getElementById("layoutBlock");
+const originalCanvas = document.getElementById("originalCanvas");
 const layoutCanvas = document.getElementById("layoutCanvas");
+const translatedLayer = document.getElementById("translatedLayer");
 const drawingCanvas = document.getElementById("drawingCanvas");
 const canvasStage = document.getElementById("canvasStage");
 const textLayer = document.getElementById("textLayer");
@@ -15,14 +17,27 @@ const translationText = document.getElementById("translationText");
 const errorBlock = document.getElementById("errorBlock");
 const errorText = document.getElementById("errorText");
 const meta = document.getElementById("meta");
+const langBadge = document.getElementById("langBadge");
+const langBadgeText = document.getElementById("langBadgeText");
+const langDropdown = document.getElementById("langDropdown");
+const langSearchInput = document.getElementById("langSearchInput");
+const langList = document.getElementById("langList");
+const langSelectorWrap = document.querySelector(".lang-selector-wrap");
+const ocrBadge = document.getElementById("ocrBadge");
+const ocrBadgeText = document.getElementById("ocrBadgeText");
+const speakButton = document.getElementById("speakButton");
+const speakTextButton = document.getElementById("speakTextButton");
 const copyButton = document.getElementById("copyButton");
 const copyImageButton = document.getElementById("copyImageButton");
 const recaptureButton = document.getElementById("recaptureButton");
+const recaptureTextButton = document.getElementById("recaptureTextButton");
 const closeButton = document.getElementById("closeButton");
 const openMainButton = document.getElementById("openMainButton");
 const zoomOutButton = document.getElementById("zoomOutButton");
 const zoomResetButton = document.getElementById("zoomResetButton");
 const zoomInButton = document.getElementById("zoomInButton");
+const fitWidthButton = document.getElementById("fitWidthButton");
+const fitPageButton = document.getElementById("fitPageButton");
 const selectTextButton = document.getElementById("selectTextButton");
 const drawButton = document.getElementById("drawButton");
 const eraseButton = document.getElementById("eraseButton");
@@ -30,11 +45,33 @@ const clearDrawingButton = document.getElementById("clearDrawingButton");
 const resultTitle = document.getElementById("resultTitle");
 const selectionToolbar = document.getElementById("selectionToolbar");
 const copySelectionButton = document.getElementById("copySelectionButton");
+const compareHandle = document.getElementById("compareHandle");
+const compareToggleButton = document.getElementById("compareToggleButton");
+const compareToggleText = document.getElementById("compareToggleText");
+const readingBar = document.getElementById("readingBar");
+const readingIndex = document.getElementById("readingIndex");
+const readingText = document.getElementById("readingText");
+const readingHighlight = document.getElementById("readingHighlight");
+const prevSpeechBtn = document.getElementById("prevSpeechBtn");
+const pauseSpeechBtn = document.getElementById("pauseSpeechBtn");
+const nextSpeechBtn = document.getElementById("nextSpeechBtn");
+const stopSpeechBtn = document.getElementById("stopSpeechBtn");
 
 let current = null;
+let currentAudio = null;
+let availableLanguages = [];
+let speechState = {
+  active: false,
+  paused: false,
+  currentIndex: 0,
+  blocks: [],
+  audio: null
+};
 let drawVersion = 0;
 let canvasReady = false;
 let zoom = 1;
+let comparePosition = 0;
+let isComparing = false;
 let isPanning = false;
 let panStart = null;
 let interactionMode = "select";
@@ -56,14 +93,27 @@ async function init() {
     render(data);
   });
 
+  initLanguagePicker();
+  loadLanguages().catch(() => {});
+
   copyButton.addEventListener("click", copyTranslation);
   copyImageButton.addEventListener("click", copyLayoutImage);
-  recaptureButton.addEventListener("click", () => window.inputBridge.recapture());
+  speakButton?.addEventListener("click", toggleSpeech);
+  speakTextButton?.addEventListener("click", toggleSpeech);
+  prevSpeechBtn?.addEventListener("click", () => jumpToSpeechBlock(speechState.currentIndex - 1));
+  nextSpeechBtn?.addEventListener("click", () => jumpToSpeechBlock(speechState.currentIndex + 1));
+  pauseSpeechBtn?.addEventListener("click", togglePauseSpeech);
+  stopSpeechBtn?.addEventListener("click", stopSpeech);
+  recaptureButton?.addEventListener("click", () => window.inputBridge.recapture());
+  recaptureTextButton?.addEventListener("click", () => window.inputBridge.recapture());
   closeButton.addEventListener("click", () => window.inputBridge.closeResult());
-  openMainButton.addEventListener("click", () => window.inputBridge.showMain());
+  openMainButton?.addEventListener("click", () => window.inputBridge.showMain());
+  compareToggleButton?.addEventListener("click", toggleCompareMode);
   zoomOutButton.addEventListener("click", () => setZoom(zoom - 0.25));
   zoomInButton.addEventListener("click", () => setZoom(zoom + 0.25));
   zoomResetButton.addEventListener("click", () => setZoom(1));
+  fitWidthButton?.addEventListener("click", () => setZoom(1));
+  fitPageButton?.addEventListener("click", fitPage);
   selectTextButton.addEventListener("click", () => setInteractionMode("select"));
   drawButton.addEventListener("click", () => setInteractionMode("draw"));
   eraseButton.addEventListener("click", () => setInteractionMode("erase"));
@@ -74,6 +124,11 @@ async function init() {
   drawingCanvas.addEventListener("pointermove", onDrawMove);
   drawingCanvas.addEventListener("pointerup", onDrawEnd);
   drawingCanvas.addEventListener("pointercancel", onDrawEnd);
+  compareHandle.addEventListener("pointerdown", onCompareStart);
+  compareHandle.addEventListener("pointermove", onCompareMove);
+  compareHandle.addEventListener("pointerup", onCompareEnd);
+  compareHandle.addEventListener("pointercancel", onCompareEnd);
+  compareHandle.addEventListener("keydown", onCompareKeyDown);
   canvasWrap.addEventListener("wheel", onCanvasWheel, { passive: false });
   canvasWrap.addEventListener("pointerdown", onPanStart);
   canvasWrap.addEventListener("pointermove", onPanMove);
@@ -82,24 +137,32 @@ async function init() {
   layoutCanvas.addEventListener("dblclick", () => setZoom(1));
   document.addEventListener("selectionchange", scheduleSelectionToolbarUpdate);
   document.addEventListener("keydown", onSelectionShortcut);
-  canvasWrap.addEventListener("scroll", scheduleSelectionToolbarUpdate, { passive: true });
+  canvasWrap.addEventListener("scroll", () => {
+    scheduleSelectionToolbarUpdate();
+    syncCompareHandleKnob();
+  }, { passive: true });
   window.addEventListener("blur", hideSelectionToolbar);
   window.addEventListener("resize", () => {
     if (current?.mode !== "layout") return;
     syncSelectableTextScale();
     scheduleSelectionToolbarUpdate();
+    syncCompareHandleKnob();
   });
 }
 
 function render(data = {}) {
   const status = data.status || "loading";
   const layoutMode = data.mode === "layout";
+  if (status === "loading") {
+    comparePosition = 0;
+  }
   loading.hidden = status !== "loading";
   loadingText.textContent = data.meta || "Đang xử lý…";
   resultTitle.textContent = layoutMode ? "Dịch trong ảnh" : "Dịch màn hình";
   document.body.classList.toggle("layout-mode", layoutMode);
 
   preview.hidden = layoutMode || !data.previewDataUrl;
+  preview.style.display = preview.hidden ? "none" : "block";
   if (!preview.hidden) preview.src = data.previewDataUrl;
 
   const original = String(data.original || "").trim();
@@ -108,17 +171,162 @@ function render(data = {}) {
 
   originalText.textContent = original;
   originalBlock.hidden = layoutMode || !original || !showOriginal;
+  originalBlock.style.display = originalBlock.hidden ? "none" : "";
   translationText.textContent = translation;
   translationBlock.hidden = layoutMode || !translation;
+  translationBlock.style.display = translationBlock.hidden ? "none" : "";
 
   layoutBlock.hidden = !layoutMode || !data.layoutImageDataUrl;
+  syncCompareUi(status);
   copyImageButton.disabled = true;
   canvasReady = false;
   if (!layoutBlock.hidden) void drawLayoutResult(data);
 
+  if (langBadgeText) {
+    if (status === "loading") {
+      langBadgeText.textContent = data.meta || "Đang nhận dạng…";
+      if (ocrBadge) ocrBadge.hidden = true;
+      if (speakButton) speakButton.disabled = true;
+    } else if (status === "done") {
+      const src = data.sourceLanguage || "Tự động";
+      const tgt = data.targetLanguage || "Tiếng Việt";
+      langBadgeText.textContent = `${src} → ${tgt}`;
+      if (speakButton) speakButton.disabled = !translation;
+      if (ocrBadge) {
+        const ocr = data.ocrDetection || data.detection;
+        const hasAuto = ocr?.mode === "auto" || (data.meta && data.meta.includes("OCR auto"));
+        ocrBadge.hidden = !hasAuto;
+        if (hasAuto) {
+          const conf = ocr?.confidence ? ` ${Math.round(ocr.confidence * 100)}%` : "";
+          ocrBadgeText.textContent = `Auto OCR${conf}`;
+          ocrBadge.title = data.meta || "Tự động phát hiện ngôn ngữ";
+        }
+      }
+    } else {
+      langBadgeText.textContent = "Không thành công";
+      if (ocrBadge) ocrBadge.hidden = true;
+      if (speakButton) speakButton.disabled = true;
+    }
+  }
+
   errorBlock.hidden = status !== "error";
   errorText.textContent = status === "error" ? String(data.error || "Lỗi không xác định.") : "";
-  meta.textContent = data.meta || "";
+  if (meta) meta.textContent = data.meta || "";
+}
+
+const POPULAR_LANGUAGES = [
+  { name: "Vietnamese", code: "vi" },
+  { name: "English", code: "en" },
+  { name: "Chinese (Simplified)", code: "zh-CN" },
+  { name: "Chinese (Traditional)", code: "zh-TW" },
+  { name: "Japanese", code: "ja" },
+  { name: "Korean", code: "ko" },
+  { name: "French", code: "fr" },
+  { name: "German", code: "de" },
+  { name: "Spanish", code: "es" },
+  { name: "Russian", code: "ru" },
+  { name: "Italian", code: "it" },
+  { name: "Portuguese", code: "pt" },
+  { name: "Thai", code: "th" },
+  { name: "Indonesian", code: "id" }
+];
+
+function initLanguagePicker() {
+  availableLanguages = POPULAR_LANGUAGES;
+  langBadge?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleLanguageDropdown();
+  });
+  langSearchInput?.addEventListener("input", () => {
+    renderLanguageList(langSearchInput.value);
+  });
+  langDropdown?.addEventListener("click", (event) => {
+    event.stopPropagation();
+  });
+  document.addEventListener("click", closeLanguageDropdown);
+}
+
+async function loadLanguages() {
+  try {
+    const bootstrap = await window.inputBridge.getBootstrap();
+    if (Array.isArray(bootstrap?.languages) && bootstrap.languages.length) {
+      availableLanguages = bootstrap.languages;
+    } else {
+      availableLanguages = POPULAR_LANGUAGES;
+    }
+  } catch {
+    availableLanguages = POPULAR_LANGUAGES;
+  }
+  renderLanguageList();
+}
+
+function toggleLanguageDropdown() {
+  if (!langDropdown) return;
+  const isHidden = langDropdown.hidden;
+  if (isHidden) {
+    langDropdown.hidden = false;
+    langSelectorWrap?.classList.add("is-open");
+    langBadge?.setAttribute("aria-expanded", "true");
+    renderLanguageList();
+    setTimeout(() => langSearchInput?.focus(), 50);
+  } else {
+    closeLanguageDropdown();
+  }
+}
+
+function closeLanguageDropdown() {
+  if (!langDropdown) return;
+  langDropdown.hidden = true;
+  langSelectorWrap?.classList.remove("is-open");
+  langBadge?.setAttribute("aria-expanded", "false");
+  if (langSearchInput) langSearchInput.value = "";
+}
+
+function renderLanguageList(filterText = "") {
+  if (!langList) return;
+  const search = filterText.toLowerCase().trim();
+  const currentTgt = current?.targetLanguage || "Vietnamese";
+
+  const filtered = availableLanguages.filter((l) =>
+    !search || l.name.toLowerCase().includes(search) || l.code.toLowerCase().includes(search)
+  );
+
+  langList.innerHTML = "";
+  if (!filtered.length) {
+    const empty = document.createElement("div");
+    empty.style.cssText = "padding: 12px; font-size: 11px; color: #94a3b8; text-align: center;";
+    empty.textContent = "Không tìm thấy";
+    langList.appendChild(empty);
+    return;
+  }
+
+  for (const item of filtered) {
+    const btn = document.createElement("div");
+    const isSelected = item.name.toLowerCase() === currentTgt.toLowerCase();
+    btn.className = `lang-item ${isSelected ? "is-selected" : ""}`;
+    btn.setAttribute("role", "option");
+    btn.setAttribute("aria-selected", isSelected ? "true" : "false");
+    btn.innerHTML = `<span>${item.name}</span><span style="font-size:9.5px; opacity:0.6;">${item.code}</span>`;
+    btn.addEventListener("click", async () => {
+      closeLanguageDropdown();
+      if (item.name.toLowerCase() === currentTgt.toLowerCase()) return;
+      await selectSessionTargetLanguage(item.name);
+    });
+    langList.appendChild(btn);
+  }
+}
+
+async function selectSessionTargetLanguage(targetLanguage) {
+  if (!targetLanguage) return;
+  loading.hidden = false;
+  loadingText.textContent = `Đang dịch lại sang ${targetLanguage}…`;
+  try {
+    await window.inputBridge.retranslateResult(targetLanguage);
+  } catch (error) {
+    console.error("Retranslate error:", error);
+  } finally {
+    loading.hidden = true;
+  }
 }
 
 async function drawLayoutResult(data) {
@@ -128,6 +336,8 @@ async function drawLayoutResult(data) {
 
   layoutImageWidth = image.naturalWidth;
   layoutImageHeight = image.naturalHeight;
+  originalCanvas.width = image.naturalWidth;
+  originalCanvas.height = image.naturalHeight;
   layoutCanvas.width = image.naturalWidth;
   layoutCanvas.height = image.naturalHeight;
   drawingCanvas.width = image.naturalWidth;
@@ -136,6 +346,10 @@ async function drawLayoutResult(data) {
   drawingHasContent = false;
   clearDrawingButton.disabled = true;
   setZoom(zoom, false);
+  const originalContext = originalCanvas.getContext("2d", { alpha: false });
+  originalContext.imageSmoothingEnabled = true;
+  originalContext.imageSmoothingQuality = "high";
+  originalContext.drawImage(image, 0, 0);
   const context2d = layoutCanvas.getContext("2d", { alpha: false });
   context2d.imageSmoothingEnabled = true;
   context2d.imageSmoothingQuality = "high";
@@ -149,58 +363,160 @@ async function drawLayoutResult(data) {
     }
   }
   renderSelectableText(renderedBlocks, image.naturalWidth, image.naturalHeight);
-  requestAnimationFrame(syncSelectableTextScale);
+  requestAnimationFrame(() => {
+    syncSelectableTextScale();
+    syncCompareHandleKnob();
+  });
 
   canvasReady = data.status === "done";
   copyImageButton.disabled = !canvasReady;
 }
 
+function syncCompareHandleKnob() {
+  if (!canvasStage || !canvasWrap) return;
+  const stageRect = canvasStage.getBoundingClientRect();
+  const wrapRect = canvasWrap.getBoundingClientRect();
+  if (!stageRect.height) return;
+
+  const visibleTop = Math.max(stageRect.top, wrapRect.top);
+  const visibleBottom = Math.min(stageRect.bottom, wrapRect.bottom);
+  const visibleCenter = (visibleTop + visibleBottom) / 2;
+  const relativeCenterY = clamp(visibleCenter - stageRect.top, 24, stageRect.height - 24);
+  canvasStage.style.setProperty("--compare-handle-top", `${relativeCenterY}px`);
+}
+
+function syncCompareUi(status) {
+  const ready = status === "done" || Boolean(current?.layoutImageDataUrl);
+  compareHandle.hidden = !ready;
+  compareToggleButton.disabled = !ready;
+  translatedLayer.classList.toggle("is-ready", ready);
+  setComparePosition(comparePosition);
+  syncCompareHandleKnob();
+}
+
+function setComparePosition(position) {
+  comparePosition = clamp(Number(position) || 0, 0, 1);
+  canvasStage.style.setProperty("--compare-position", `${comparePosition * 100}%`);
+  compareHandle.setAttribute("aria-valuenow", String(Math.round(comparePosition * 100)));
+  canvasStage.classList.toggle("at-start", comparePosition <= 0.015);
+  canvasStage.classList.toggle("at-end", comparePosition >= 0.985);
+  if (compareToggleText) {
+    compareToggleText.textContent = comparePosition >= 0.5 ? "Bản dịch" : "Ảnh gốc";
+  }
+  compareToggleButton?.classList.toggle("active", comparePosition >= 0.5);
+}
+
+function toggleCompareMode() {
+  if (comparePosition < 0.5) {
+    setComparePosition(1);
+  } else {
+    setComparePosition(0);
+  }
+}
+
+function comparePositionFromEvent(event) {
+  const rect = canvasStage.getBoundingClientRect();
+  if (!rect.width) return comparePosition;
+  return (event.clientX - rect.left) / rect.width;
+}
+
+function onCompareStart(event) {
+  if (current?.status !== "done") return;
+  isComparing = true;
+  canvasStage.classList.add("is-comparing");
+  compareHandle.setPointerCapture(event.pointerId);
+  setComparePosition(comparePositionFromEvent(event));
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+function onCompareMove(event) {
+  if (!isComparing) return;
+  setComparePosition(comparePositionFromEvent(event));
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+function onCompareEnd(event) {
+  if (!isComparing) return;
+  isComparing = false;
+  canvasStage.classList.remove("is-comparing");
+  if (compareHandle.hasPointerCapture(event.pointerId)) {
+    compareHandle.releasePointerCapture(event.pointerId);
+  }
+  syncCompareHandleKnob();
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+function onCompareKeyDown(event) {
+  if (event.key !== "ArrowLeft" && event.key !== "ArrowRight" && event.key !== "Home" && event.key !== "End") return;
+  if (event.key === "Home") setComparePosition(0);
+  else if (event.key === "End") setComparePosition(1);
+  else setComparePosition(comparePosition + (event.key === "ArrowLeft" ? -0.03 : 0.03));
+  event.preventDefault();
+}
+
 function drawTranslatedBlock(context2d, block, imageWidth, imageHeight) {
   const originalHeight = clamp(Number(block?.height || 1), 1, imageHeight);
-  const outerPad = Math.max(2, Math.round(originalHeight * 0.12));
-  const x = clamp(Math.round(Number(block?.x || 0)) - outerPad, 0, imageWidth - 1);
-  const y = clamp(Math.round(Number(block?.y || 0)) - outerPad, 0, imageHeight - 1);
-  const width = clamp(Math.round(Number(block?.width || 1)) + outerPad * 2, 1, imageWidth - x);
-  const height = clamp(Math.round(originalHeight) + outerPad * 2, 1, imageHeight - y);
-  const text = String(block?.translation || block?.text || "").trim();
-  if (!text) return;
+  const originalWidth = clamp(Number(block?.width || 1), 1, imageWidth);
+  const lineCount = Math.max(1, Number(block?.lineCount || 1));
+  const avgLineHeight = Math.max(8, Number(block?.avgLineHeight || originalHeight / lineCount));
 
-  const luminance = averageLuminance(context2d, x, y, width, height);
-  const darkSurface = luminance < 118;
+  const text = String(block?.translation || block?.text || "").trim();
+  if (!text) return null;
+  const original = String(block?.original || block?.text || "").trim();
+  if (original && original.toLowerCase() === text.toLowerCase()) {
+    return null;
+  }
+
+  // Calculate ideal font size & measure translated text width
+  const idealFontSize = clamp(Math.floor(avgLineHeight * 0.76), 8, 48);
+  context2d.font = `600 ${idealFontSize}px -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif`;
+  const textMetrics = context2d.measureText(text);
+  const neededTextWidth = Math.ceil(textMetrics.width);
+
+  const innerPadX = Math.max(3, Math.round(avgLineHeight * 0.15));
+  const innerPadY = Math.max(1, Math.round(avgLineHeight * 0.08));
+
+  // The inpainting box MUST cover at least 100% of the original text, or expand if translation needs more space
+  const x = clamp(Math.round(Number(block?.x || 0)), 0, imageWidth - 1);
+  const y = clamp(Math.round(Number(block?.y || 0)), 0, imageHeight - 1);
+  const coverWidth = clamp(Math.max(originalWidth, neededTextWidth + innerPadX * 2 + 8), originalWidth, imageWidth - x);
+  const height = clamp(Math.round(originalHeight), 1, imageHeight - y);
+
+  const palette = sampleColorPalette(context2d, x, y, coverWidth, height);
   context2d.save();
-  roundedRect(context2d, x, y, width, height, Math.min(8, height * 0.22));
-  context2d.fillStyle = darkSurface ? "rgba(18, 23, 34, 0.91)" : "rgba(250, 252, 255, 0.92)";
+  roundedRect(context2d, x, y, coverWidth, height, Math.min(4, height * 0.2));
+  context2d.fillStyle = palette.backgroundColor;
   context2d.fill();
-  context2d.strokeStyle = darkSurface ? "rgba(255,255,255,.22)" : "rgba(62,78,108,.18)";
-  context2d.lineWidth = Math.max(1, Math.round(Math.min(imageWidth, imageHeight) / 900));
-  context2d.stroke();
   context2d.clip();
 
-  const innerPad = Math.max(3, Math.round(height * 0.12));
-  const textWidth = Math.max(1, width - innerPad * 2);
-  const textHeight = Math.max(1, height - innerPad * 2);
-  const fit = fitText(context2d, text, textWidth, textHeight, height);
-  context2d.fillStyle = darkSurface ? "#ffffff" : "#172034";
+  const textWidth = Math.max(1, coverWidth - innerPadX * 2);
+  const textHeight = Math.max(1, height - innerPadY * 2);
+  const fit = fitText(context2d, text, textWidth, textHeight, avgLineHeight, lineCount);
+
+  context2d.fillStyle = palette.textColor;
   context2d.textBaseline = "top";
   context2d.textAlign = "left";
-  context2d.font = `600 ${fit.fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+  context2d.font = `600 ${fit.fontSize}px -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif`;
 
   const visibleLines = fit.lines.slice(0, fit.maxLines);
   if (fit.lines.length > fit.maxLines && visibleLines.length) {
     visibleLines[visibleLines.length - 1] = trimWithEllipsis(context2d, visibleLines[visibleLines.length - 1], textWidth);
   }
   const totalHeight = visibleLines.length * fit.lineHeight;
-  let cursorY = y + innerPad + Math.max(0, (textHeight - totalHeight) / 2);
+  let cursorY = y + innerPadY + Math.max(0, (textHeight - totalHeight) / 2);
   for (const line of visibleLines) {
-    context2d.fillText(line, x + innerPad, cursorY, textWidth);
+    context2d.fillText(line, x + innerPadX, cursorY, textWidth);
     cursorY += fit.lineHeight;
   }
   context2d.restore();
 
   return {
     text: visibleLines.join("\n"),
-    x: x + innerPad,
-    y: y + innerPad + Math.max(0, (textHeight - totalHeight) / 2),
+    x: x + innerPadX,
+    y: y + innerPadY + Math.max(0, (textHeight - totalHeight) / 2),
     width: textWidth,
     height: Math.min(textHeight, totalHeight),
     fontSize: fit.fontSize,
@@ -208,16 +524,18 @@ function drawTranslatedBlock(context2d, block, imageWidth, imageHeight) {
   };
 }
 
-function fitText(context2d, text, maxWidth, maxHeight, originalHeight) {
-  const startSize = clamp(Math.floor(originalHeight * 0.68), 9, 40);
+function fitText(context2d, text, maxWidth, maxHeight, avgLineHeight, lineCount) {
+  const targetLines = Math.max(1, lineCount || 1);
+  const baseSize = clamp(Math.floor(avgLineHeight * 0.76), 8, 54);
   let best = null;
-  for (let fontSize = startSize; fontSize >= 7; fontSize -= 1) {
-    context2d.font = `600 ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+
+  for (let fontSize = baseSize; fontSize >= 7; fontSize -= 1) {
+    context2d.font = `600 ${fontSize}px -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif`;
     const lines = wrapText(context2d, text, maxWidth);
-    const lineHeight = Math.ceil(fontSize * 1.16);
+    const lineHeight = Math.ceil(fontSize * 1.25);
     const maxLines = Math.max(1, Math.floor(maxHeight / lineHeight));
     best = { fontSize, lines, lineHeight, maxLines };
-    if (lines.length <= maxLines) return best;
+    if (lines.length <= maxLines && lines.length <= targetLines + 1) return best;
   }
   return best || { fontSize: 7, lines: [text], lineHeight: 9, maxLines: 1 };
 }
@@ -253,22 +571,45 @@ function trimWithEllipsis(context2d, text, maxWidth) {
   return `${output}…`;
 }
 
-function averageLuminance(context2d, x, y, width, height) {
-  const sampleWidth = Math.max(1, Math.min(40, width));
-  const sampleHeight = Math.max(1, Math.min(20, height));
-  const sampleCanvas = document.createElement("canvas");
-  sampleCanvas.width = sampleWidth;
-  sampleCanvas.height = sampleHeight;
-  const sampleContext = sampleCanvas.getContext("2d", { willReadFrequently: true });
-  sampleContext.drawImage(layoutCanvas, x, y, width, height, 0, 0, sampleWidth, sampleHeight);
-  const pixels = sampleContext.getImageData(0, 0, sampleWidth, sampleHeight).data;
-  let total = 0;
-  let count = 0;
-  for (let index = 0; index < pixels.length; index += 16) {
-    total += pixels[index] * 0.2126 + pixels[index + 1] * 0.7152 + pixels[index + 2] * 0.0722;
-    count += 1;
+function sampleColorPalette(context2d, x, y, width, height) {
+  const sampleW = Math.max(1, Math.min(60, width));
+  const sampleH = Math.max(1, Math.min(40, height));
+  const canvas = document.createElement("canvas");
+  canvas.width = sampleW;
+  canvas.height = sampleH;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(layoutCanvas, x, y, width, height, 0, 0, sampleW, sampleH);
+  const data = ctx.getImageData(0, 0, sampleW, sampleH).data;
+
+  // Sample border pixels for background color
+  let bgR = 0, bgG = 0, bgB = 0, bgCount = 0;
+  for (let py = 0; py < sampleH; py++) {
+    for (let px = 0; px < sampleW; px++) {
+      const isBorder = py === 0 || py === sampleH - 1 || px === 0 || px === sampleW - 1;
+      if (isBorder) {
+        const idx = (py * sampleW + px) * 4;
+        bgR += data[idx];
+        bgG += data[idx + 1];
+        bgB += data[idx + 2];
+        bgCount++;
+      }
+    }
   }
-  return count ? total / count : 255;
+
+  const r = bgCount ? Math.round(bgR / bgCount) : 255;
+  const g = bgCount ? Math.round(bgG / bgCount) : 255;
+  const b = bgCount ? Math.round(bgB / bgCount) : 255;
+  const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  const isDark = luminance < 125;
+
+  return {
+    backgroundColor: isDark
+      ? `rgb(${Math.max(10, r - 3)}, ${Math.max(10, g - 3)}, ${Math.max(10, b - 3)})`
+      : `rgb(${Math.min(255, r + 3)}, ${Math.min(255, g + 3)}, ${Math.min(255, b + 3)})`,
+    textColor: isDark ? "#ffffff" : "#111827",
+    strokeColor: isDark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.06)",
+    isDark
+  };
 }
 
 function roundedRect(context2d, x, y, width, height, radius) {
@@ -335,11 +676,13 @@ function setInteractionMode(mode) {
   selectTextButton.setAttribute("aria-selected", String(mode === "select"));
   drawButton.setAttribute("aria-selected", String(mode === "draw"));
   eraseButton.setAttribute("aria-selected", String(mode === "erase"));
-  interactionHint.textContent = mode === "select"
-    ? "Bôi đen chữ để hiện nút sao chép · Ctrl + lăn để phóng to"
-    : mode === "draw"
-      ? "Kéo chuột để vẽ lên ảnh"
-      : "Kéo qua nét vẽ để tẩy";
+  if (interactionHint) {
+    interactionHint.textContent = mode === "select"
+      ? "Kéo thanh Before/After để so sánh · Bôi đen chữ để sao chép"
+      : mode === "draw"
+        ? "Kéo chuột để vẽ lên ảnh"
+        : "Kéo qua nét vẽ để tẩy";
+  }
 }
 
 function scheduleSelectionToolbarUpdate() {
@@ -500,10 +843,208 @@ async function copyLayoutImage() {
   if (result?.ok) flashButton(copyImageButton, "Đã sao chép");
 }
 
+async function toggleSpeech() {
+  if (speechState.active) {
+    stopSpeech();
+    return;
+  }
+
+  const isLayout = current?.mode === "layout";
+  let blocks = [];
+  if (isLayout && Array.isArray(current?.layoutBlocks) && current.layoutBlocks.length > 0) {
+    blocks = current.layoutBlocks
+      .filter((b) => (b.translation || b.text || "").trim())
+      .map((b) => ({
+        id: b.id,
+        text: String(b.translation || b.text || "").trim(),
+        x: Number(b.x || 0),
+        y: Number(b.y || 0),
+        width: Number(b.width || 10),
+        height: Number(b.height || 10)
+      }));
+  }
+
+  if (!blocks.length) {
+    const raw = String(current?.translation || current?.original || "").trim();
+    if (!raw) return;
+    const lines = raw.split(/\r?\n+/).map((s) => s.trim()).filter(Boolean);
+    blocks = lines.map((line, idx) => ({ id: `line-${idx}`, text: line }));
+  }
+
+  if (!blocks.length) return;
+
+  speechState.active = true;
+  speechState.paused = false;
+  speechState.blocks = blocks;
+  speechState.currentIndex = 0;
+  await playSpeechBlock(0);
+}
+
+function highlightSpeechBlock(block) {
+  if (!block || !readingHighlight || typeof block.x === "undefined" || !block.width) {
+    if (readingHighlight) readingHighlight.hidden = true;
+    return;
+  }
+  readingHighlight.hidden = false;
+  const stageW = layoutCanvas.width || layoutImageWidth || 1;
+  const stageH = layoutCanvas.height || layoutImageHeight || 1;
+  const leftPct = (block.x / stageW) * 100;
+  const topPct = (block.y / stageH) * 100;
+  const widthPct = (block.width / stageW) * 100;
+  const heightPct = (block.height / stageH) * 100;
+
+  readingHighlight.style.left = `${leftPct}%`;
+  readingHighlight.style.top = `${topPct}%`;
+  readingHighlight.style.width = `${widthPct}%`;
+  readingHighlight.style.height = `${heightPct}%`;
+
+  if (canvasWrap && zoom > 1) {
+    const wrapRect = canvasWrap.getBoundingClientRect();
+    const stageRect = canvasStage.getBoundingClientRect();
+    const targetTop = (topPct / 100) * stageRect.height;
+    canvasWrap.scrollTo({
+      top: Math.max(0, targetTop - wrapRect.height / 3),
+      behavior: "smooth"
+    });
+  }
+}
+
+async function playSpeechBlock(index) {
+  if (!speechState.active || index < 0 || index >= speechState.blocks.length) {
+    stopSpeech();
+    return;
+  }
+
+  if (speechState.audio) {
+    speechState.audio.pause();
+    speechState.audio = null;
+  }
+
+  speechState.currentIndex = index;
+  speechState.paused = false;
+  const block = speechState.blocks[index];
+  const text = String(block.text || "").trim();
+
+  if (readingBar) readingBar.hidden = false;
+  if (readingIndex) readingIndex.textContent = `${index + 1}/${speechState.blocks.length}`;
+  if (readingText) readingText.textContent = text;
+  if (pauseSpeechBtn) pauseSpeechBtn.textContent = "⏸";
+  highlightSpeechBlock(block);
+  updateSpeechButtonState(true, "Dừng đọc");
+
+  try {
+    const targetLang = current?.targetLanguage || "Vietnamese";
+    const response = await window.inputBridge.speakResult({
+      text,
+      locale: targetLang
+    });
+    if (!speechState.active || speechState.currentIndex !== index) return;
+    if (!response?.audioBase64) throw new Error("Không nhận được âm thanh.");
+
+    const audio = new Audio(`data:${response.contentType || "audio/mpeg"};base64,${response.audioBase64}`);
+    speechState.audio = audio;
+    currentAudio = audio;
+
+    audio.onended = () => {
+      if (!speechState.active || speechState.currentIndex !== index) return;
+      playSpeechBlock(index + 1);
+    };
+    audio.onerror = () => {
+      if (!speechState.active || speechState.currentIndex !== index) return;
+      playSpeechBlock(index + 1);
+    };
+    await audio.play();
+  } catch (err) {
+    console.error("Speech error for block:", err);
+    if (speechState.active && speechState.currentIndex === index) {
+      setTimeout(() => {
+        if (speechState.active && speechState.currentIndex === index) {
+          playSpeechBlock(index + 1);
+        }
+      }, 500);
+    }
+  }
+}
+
+function jumpToSpeechBlock(index) {
+  if (!speechState.active) return;
+  const clamped = clamp(index, 0, speechState.blocks.length - 1);
+  void playSpeechBlock(clamped);
+}
+
+function togglePauseSpeech() {
+  if (!speechState.active || !speechState.audio) return;
+  if (speechState.audio.paused) {
+    speechState.audio.play();
+    speechState.paused = false;
+    if (pauseSpeechBtn) pauseSpeechBtn.textContent = "⏸";
+  } else {
+    speechState.audio.pause();
+    speechState.paused = true;
+    if (pauseSpeechBtn) pauseSpeechBtn.textContent = "▶";
+  }
+}
+
+function stopSpeech() {
+  speechState.active = false;
+  speechState.paused = false;
+  if (speechState.audio) {
+    speechState.audio.pause();
+    speechState.audio = null;
+  }
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio = null;
+  }
+  if (readingBar) readingBar.hidden = true;
+  if (readingHighlight) readingHighlight.hidden = true;
+  updateSpeechButtonState(false);
+}
+
+function updateSpeechButtonState(isPlaying, label = "Nghe đọc") {
+  for (const btn of [speakButton, speakTextButton].filter(Boolean)) {
+    const span = btn.querySelector("span") || btn;
+    if (span) span.textContent = isPlaying ? label : "Nghe đọc";
+    btn.classList.toggle("is-speaking", isPlaying);
+  }
+}
+
 function flashButton(button, text) {
-  const previous = button.textContent;
-  button.textContent = text;
-  setTimeout(() => { button.textContent = previous; }, 1200);
+  const label = button.querySelector("span") || button.querySelector("strong") || button;
+  const previous = label.textContent;
+  label.textContent = text;
+  button.classList.add("is-success");
+  setTimeout(() => {
+    label.textContent = previous;
+    button.classList.remove("is-success");
+  }, 1200);
+}
+
+function fitPage() {
+  if (!layoutImageWidth || !layoutImageHeight || !canvasWrap) return;
+  const wrapW = Math.max(1, canvasWrap.clientWidth - 28);
+  const wrapH = Math.max(1, canvasWrap.clientHeight - 28);
+  const imageAspect = layoutImageWidth / layoutImageHeight;
+  const wrapAspect = wrapW / wrapH;
+  if (imageAspect >= wrapAspect) {
+    setZoom(1);
+  } else {
+    const scale = (wrapH * imageAspect) / wrapW;
+    setZoom(clamp(Math.round(scale * 100) / 100, 0.2, 4));
+  }
+}
+
+function syncCompareHandleKnob() {
+  if (!canvasWrap || !canvasStage || compareHandle.hidden) return;
+  const wrapRect = canvasWrap.getBoundingClientRect();
+  const stageRect = canvasStage.getBoundingClientRect();
+  if (stageRect.height <= 0) return;
+
+  const visibleTop = Math.max(0, wrapRect.top - stageRect.top);
+  const visibleBottom = Math.min(stageRect.height, wrapRect.bottom - stageRect.top);
+  const centerY = (visibleTop + visibleBottom) / 2;
+  const knobY = clamp(centerY, 18, Math.max(18, stageRect.height - 18));
+  canvasStage.style.setProperty("--compare-handle-top", `${knobY}px`);
 }
 
 function setZoom(nextZoom, keepAnchor = true, anchorPoint = null) {
@@ -522,11 +1063,16 @@ function setZoom(nextZoom, keepAnchor = true, anchorPoint = null) {
     ? clamp((anchorY - stageRect.top) / stageRect.height, 0, 1)
     : 0.5;
 
-  zoom = clamp(Math.round(nextZoom * 100) / 100, 0.5, 4);
-  canvasStage.style.width = `${zoom * 100}%`;
-  canvasStage.style.maxWidth = "none";
+  zoom = clamp(Math.round(nextZoom * 100) / 100, 0.2, 4);
+  if (zoom <= 1) {
+    canvasStage.style.width = `${zoom * 100}%`;
+    canvasStage.style.maxWidth = "100%";
+  } else {
+    canvasStage.style.width = `${zoom * 100}%`;
+    canvasStage.style.maxWidth = "none";
+  }
   zoomResetButton.textContent = `${Math.round(zoom * 100)}%`;
-  zoomOutButton.disabled = zoom <= 0.5;
+  zoomOutButton.disabled = zoom <= 0.2;
   zoomInButton.disabled = zoom >= 4;
   if (keepAnchor) {
     const nextStageRect = canvasStage.getBoundingClientRect();
@@ -535,7 +1081,10 @@ function setZoom(nextZoom, keepAnchor = true, anchorPoint = null) {
     canvasWrap.scrollLeft += nextAnchorX - anchorX;
     canvasWrap.scrollTop += nextAnchorY - anchorY;
   }
-  requestAnimationFrame(syncSelectableTextScale);
+  requestAnimationFrame(() => {
+    syncSelectableTextScale();
+    syncCompareHandleKnob();
+  });
 }
 
 function onCanvasWheel(event) {

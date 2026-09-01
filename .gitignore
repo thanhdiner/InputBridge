@@ -1,0 +1,19 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+Thumbs.db
+
+# .NET build outputs
+**/bin/
+**/obj/
+**/publish/
+*.user
+*.suo
+
+# Temporary files
+*.err
+*.out
+.ptt-hook-test.*
+backups/
+.agentbridge/

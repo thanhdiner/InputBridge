@@ -279,6 +279,10 @@ function updateApiKeyHint() {
   if ($("apiKeyHint")) $("apiKeyHint").textContent = `${count}/${LLM_API_KEY_LIMIT} configured · ${suffix}`;
 }
 
+const POPUP_DRAFT_KEY = "popupDraftState";
+let currentSpeakingButton = null;
+let currentSpeakingAudio = null;
+
 init();
 
 async function init() {
@@ -289,8 +293,158 @@ async function init() {
   render();
   upgradeSelects();
   bindEvents();
+  await restorePopupDraftState();
   updateToolUi();
   focusAndSelectActiveInput();
+}
+
+function stopPopupSpeech() {
+  if ("speechSynthesis" in window) {
+    try { window.speechSynthesis.cancel(); } catch {}
+  }
+  if (currentSpeakingAudio) {
+    try {
+      currentSpeakingAudio.pause();
+      currentSpeakingAudio.currentTime = 0;
+    } catch {}
+    currentSpeakingAudio = null;
+  }
+  if (currentSpeakingButton) {
+    currentSpeakingButton.classList.remove("is-speaking");
+    currentSpeakingButton = null;
+  }
+}
+
+async function speakPopupText(text, languageNameOrCode, buttonEl) {
+  const content = String(text || "").trim();
+  if (!content) return;
+
+  if (currentSpeakingButton === buttonEl) {
+    stopPopupSpeech();
+    return;
+  }
+
+  stopPopupSpeech();
+  currentSpeakingButton = buttonEl;
+  if (buttonEl) buttonEl.classList.add("is-speaking");
+
+  const langCode = (LANGUAGE_CATALOG?.codeFor(languageNameOrCode, "en") || languageNameOrCode || "en").toLowerCase();
+
+  // Try Web Speech API first
+  if ("speechSynthesis" in window) {
+    try {
+      const utterance = new SpeechSynthesisUtterance(content);
+      utterance.lang = langCode;
+
+      const voices = window.speechSynthesis.getVoices() || [];
+      const matched = voices.find((v) => v.lang && (v.lang.toLowerCase() === langCode.toLowerCase() || v.lang.toLowerCase().startsWith(langCode.split("-")[0])));
+      if (matched) utterance.voice = matched;
+
+      utterance.onend = () => {
+        if (currentSpeakingButton === buttonEl) {
+          buttonEl.classList.remove("is-speaking");
+          currentSpeakingButton = null;
+        }
+      };
+      utterance.onerror = () => {
+        if (currentSpeakingButton === buttonEl) {
+          buttonEl.classList.remove("is-speaking");
+          currentSpeakingButton = null;
+        }
+      };
+
+      window.speechSynthesis.speak(utterance);
+      return;
+    } catch (e) {
+      console.warn("speechSynthesis error:", e);
+    }
+  }
+
+  // Fallback to Google TTS
+  try {
+    const encoded = encodeURIComponent(content.slice(0, 200));
+    const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encoded}&tl=${langCode}&client=tw-ob`;
+    const audio = new Audio(url);
+    currentSpeakingAudio = audio;
+    audio.onended = () => {
+      if (currentSpeakingButton === buttonEl) {
+        buttonEl.classList.remove("is-speaking");
+        currentSpeakingButton = null;
+      }
+      currentSpeakingAudio = null;
+    };
+    audio.onerror = () => {
+      if (currentSpeakingButton === buttonEl) {
+        buttonEl.classList.remove("is-speaking");
+        currentSpeakingButton = null;
+      }
+      currentSpeakingAudio = null;
+    };
+    await audio.play();
+  } catch (err) {
+    stopPopupSpeech();
+  }
+}
+
+async function savePopupDraftState() {
+  const isTransEmpty = $("transResultPanel")?.classList.contains("is-empty");
+  const isWriteEmpty = $("writeResultPanel")?.classList.contains("is-empty");
+  const draft = {
+    activeTool,
+    activeWriteMode,
+    transInput: $("transInput")?.value || "",
+    transResultText: isTransEmpty ? "" : ($("transResultText")?.textContent || ""),
+    transResultMeta: $("transResultMeta")?.textContent || "",
+    transResultPhonetic: $("transResultPhonetic")?.textContent || "",
+    writeInput: $("writeInput")?.value || "",
+    writeResultText: isWriteEmpty ? "" : ($("writeResultText")?.textContent || ""),
+    writeResultMeta: $("writeResultMeta")?.textContent || "",
+    timestamp: Date.now()
+  };
+  try {
+    await chrome.storage.local.set({ [POPUP_DRAFT_KEY]: draft });
+  } catch {}
+}
+
+async function restorePopupDraftState() {
+  try {
+    const stored = await chrome.storage.local.get(POPUP_DRAFT_KEY);
+    const draft = stored?.[POPUP_DRAFT_KEY];
+    if (!draft) return;
+
+    if (draft.activeTool && (draft.activeTool === "translate" || draft.activeTool === "write")) {
+      activeTool = draft.activeTool;
+    }
+    if (draft.activeWriteMode) {
+      activeWriteMode = draft.activeWriteMode;
+    }
+
+    if (draft.transInput) {
+      if ($("transInput")) $("transInput").value = draft.transInput;
+      if ($("transSpeakInput")) $("transSpeakInput").disabled = false;
+    }
+    if (draft.transResultText && $("transResultText")) {
+      $("transResultText").textContent = draft.transResultText;
+      $("transResultPanel")?.classList.remove("is-empty");
+      if ($("transCopyResult")) $("transCopyResult").disabled = false;
+      if ($("transSpeakResult")) $("transSpeakResult").disabled = false;
+      if (draft.transResultMeta && $("transResultMeta")) $("transResultMeta").textContent = draft.transResultMeta;
+      if (draft.transResultPhonetic && $("transResultPhonetic")) $("transResultPhonetic").textContent = draft.transResultPhonetic;
+    }
+
+    if (draft.writeInput) {
+      if ($("writeInput")) $("writeInput").value = draft.writeInput;
+    }
+    if (draft.writeResultText && $("writeResultText")) {
+      $("writeResultText").textContent = draft.writeResultText;
+      $("writeResultPanel")?.classList.remove("is-empty");
+      if ($("writeCopyResult")) $("writeCopyResult").disabled = false;
+      if ($("writeSpeakResult")) $("writeSpeakResult").disabled = false;
+      if (draft.writeResultMeta && $("writeResultMeta")) $("writeResultMeta").textContent = draft.writeResultMeta;
+    }
+
+    updateCharacterCount();
+  } catch {}
 }
 
 function focusAndSelectActiveInput() {
@@ -367,6 +521,16 @@ function bindEvents() {
   $("transCopyResult").addEventListener("click", copyPopupResult);
   $("writeCopyResult").addEventListener("click", copyPopupResult);
 
+  $("transSpeakInput")?.addEventListener("click", () => {
+    speakPopupText($("transInput")?.value, $("transSourceLanguage")?.value || "en", $("transSpeakInput"));
+  });
+  $("transSpeakResult")?.addEventListener("click", () => {
+    speakPopupText($("transResultText")?.textContent, $("transTargetLanguage")?.value || "vi", $("transSpeakResult"));
+  });
+  $("writeSpeakResult")?.addEventListener("click", () => {
+    speakPopupText($("writeResultText")?.textContent, "en", $("writeSpeakResult"));
+  });
+
   $("transSwapLanguages").addEventListener("click", swapLanguages);
 
   document.querySelectorAll("[data-tool]").forEach((button) => {
@@ -391,6 +555,8 @@ function bindEvents() {
     el.addEventListener("input", () => {
       popupInputTouched = true;
       updateCharacterCount();
+      if ($("transSpeakInput")) $("transSpeakInput").disabled = !Boolean($("transInput")?.value.trim());
+      savePopupDraftState();
       if (!el.value.trim()) {
         clearPopupResult();
         return;
@@ -516,6 +682,7 @@ function showView(viewId) {
 function setActiveTool(tool) {
   if (!tool || tool === activeTool) return;
   activeTool = tool;
+  savePopupDraftState();
   updateToolUi();
   focusAndSelectActiveInput();
   const inputVal = getActiveEl("input").value.trim();
@@ -529,6 +696,7 @@ function setWriteMode(mode) {
     return;
   }
   activeWriteMode = mode;
+  savePopupDraftState();
   closeWriteModeMenu();
   updateToolUi();
 }
@@ -1023,6 +1191,8 @@ function renderPopupResult(data) {
   getActiveEl("resultText").textContent = result || getTranslation("result-empty");
   getActiveEl("resultPanel").classList.toggle("is-empty", !result);
   getActiveEl("copyResult").disabled = !result;
+  const speakBtn = activeTool === "translate" ? $("transSpeakResult") : $("writeSpeakResult");
+  if (speakBtn) speakBtn.disabled = !result;
 
   if (activeTool === "translate") {
     const source = data.detectedSourceLanguage || $("transSourceLanguage").value || "Auto";
@@ -1035,6 +1205,7 @@ function renderPopupResult(data) {
     $("writeResultMeta").textContent = getWriteModeLabel();
     hideDictionary();
   }
+  savePopupDraftState();
 }
 
 function renderPopupError(message) {
@@ -1045,7 +1216,10 @@ function renderPopupError(message) {
   }
   getActiveEl("resultPanel").classList.remove("is-empty");
   getActiveEl("copyResult").disabled = true;
+  const errSpeakBtn = activeTool === "translate" ? $("transSpeakResult") : $("writeSpeakResult");
+  if (errSpeakBtn) errSpeakBtn.disabled = true;
   hideDictionary();
+  savePopupDraftState();
 }
 
 function renderDictionary(data) {
@@ -1105,6 +1279,7 @@ function clearPopupInput() {
 }
 
 function clearPopupResult() {
+  stopPopupSpeech();
   getActiveEl("resultText").textContent = activeTool === "translate"
     ? getTranslation("trans-result-placeholder")
     : "";
@@ -1118,8 +1293,12 @@ function clearPopupResult() {
   getActiveEl("resultPanel").classList.remove("is-loading");
   getActiveEl("resultLoading").hidden = true;
   getActiveEl("copyResult").disabled = true;
+  if ($("transSpeakResult")) $("transSpeakResult").disabled = true;
+  if ($("writeSpeakResult")) $("writeSpeakResult").disabled = true;
+  if ($("transSpeakInput")) $("transSpeakInput").disabled = !Boolean($("transInput")?.value.trim());
   lastDetectedSourceLanguage = "";
   hideDictionary();
+  savePopupDraftState();
 }
 
 function updateCharacterCount() {
@@ -1804,6 +1983,7 @@ const TRANSLATIONS = {
     "trans-run-btn": "Dịch",
     "trans-result-meta": "Kết quả",
     "trans-copy-btn": "Sao chép",
+    "trans-speak-btn": "Đọc",
     "trans-result-placeholder": "Kết quả dịch sẽ xuất hiện tại đây.",
     "trans-dict-title": "Từ điển",
     
@@ -1961,6 +2141,7 @@ const TRANSLATIONS = {
     "trans-run-btn": "Translate",
     "trans-result-meta": "Result",
     "trans-copy-btn": "Copy",
+    "trans-speak-btn": "Listen",
     "trans-result-placeholder": "Translation will appear here.",
     "trans-dict-title": "Dictionary",
     

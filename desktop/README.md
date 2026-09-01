@@ -32,6 +32,19 @@ Nút đỏ chỉ ẩn cửa sổ xuống system tray để global hotkey tiếp 
 
 `Esc` hoặc chuột phải sẽ hủy chế độ chọn vùng.
 
+## Auto-detect ngôn ngữ OCR
+
+Khi source language là `Auto detect`, OCR helper chạy tất cả Windows OCR
+language pack đang cài, chấm điểm kết quả theo độ đầy đủ, hệ chữ và dấu hiệu
+ngôn ngữ, đồng thời so sánh với model Tesseract tiếng Việt chạy local. Ảnh được
+nhận là tiếng Việt sẽ dùng model `vie`, vì Windows không cung cấp OCR pack
+`vi-VN`.
+
+Muốn nhận dạng được một hệ chữ khác (Nhật, Hàn, Trung, Ả Rập...), máy phải cài
+OCR language pack tương ứng trong Windows Settings. Chọn source language thủ
+công vẫn chỉ chạy đúng pack được chọn; riêng `Vietnamese` dùng model local đi
+kèm app.
+
 ## Build bản portable
 
 ```powershell
@@ -51,6 +64,6 @@ File chạy được tạo trong `desktop/dist/`.
 
 ## Giới hạn hiện tại
 
-- OCR phụ thuộc language pack đã cài trong Windows. Chọn rõ ngôn ngữ nguồn sẽ chính xác hơn chế độ Auto.
+- OCR auto chỉ so sánh các language pack đã cài và chọn một pack cho toàn vùng ảnh; ảnh trộn nhiều hệ chữ chưa được tách theo từng dòng.
 - Một số video DRM hoặc game exclusive fullscreen có thể trả ảnh đen. Chuyển sang borderless hoặc windowed mode.
 - Bản đầu chưa có chế độ ghim vùng và dịch liên tục.

@@ -801,3 +801,20 @@ h2 { margin-bottom: 0; color: #202a40; font-size: 14px; letter-spacing: -.02em; 
 .engine-inline strong { font-size: 10.5px; font-weight: 600; }
 .engine-inline small { font-size: 9.5px; font-weight: 400; }
 .engine-inline .engine-icon { font-size: 8px; font-weight: 700; }
+
+.voice-hotkey-block { border-top: 1px solid rgba(93, 112, 150, .1); margin-top: 10px; }
+.voice-toggle-button {
+  width: 100%;
+  min-height: 34px;
+  margin-top: 8px;
+  border: 1px solid rgba(79, 128, 245, .22);
+  border-radius: 10px;
+  color: #31558f;
+  cursor: pointer;
+  background: rgba(232, 240, 255, .72);
+  font-size: 11px;
+  font-weight: 600;
+}
+.voice-toggle-button:hover { background: rgba(220, 232, 255, .92); }
+.voice-toggle-button.active { color: #9b3d49; border-color: rgba(190, 74, 85, .25); background: rgba(255, 232, 235, .78); }
+.voice-status { display: block; margin-top: 5px; color: #758198; font-size: 9.5px; line-height: 1.35; }

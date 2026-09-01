@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>InputBridge Voice</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main id="overlay" class="voice-overlay starting" aria-live="polite">
+    <div class="voice-orb" aria-hidden="true">
+      <div class="level-bars">
+        <i></i><i></i><i></i><i></i><i></i>
+      </div>
+      <span class="status-mark"></span>
+    </div>
+    <div class="voice-copy">
+      <strong id="voiceTitle">Đang mở micro…</strong>
+      <span id="voiceSubtitle">Win + Shift + F để dừng</span>
+    </div>
+    <div class="pulse-ring" aria-hidden="true"></div>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
