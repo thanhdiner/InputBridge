@@ -970,23 +970,35 @@ async function onCropCopy() {
 
 let currentSubTranslation = "";
 
+function isVietnameseText(str) {
+  const text = String(str || "").normalize("NFC").toLowerCase();
+  return /[àáảãạâầấẩẫậăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộờớởỡợùúủũụừứửữựỳýỷỹỵđ]/u.test(text);
+}
+
 function initSubTranslate() {
   populateSubTransLanguages();
-  subTransClose?.addEventListener("click", () => {
+  subTranslatePopover?.addEventListener("pointerdown", (event) => event.stopPropagation());
+  subTranslatePopover?.addEventListener("click", (event) => event.stopPropagation());
+
+  subTransClose?.addEventListener("click", (event) => {
+    event.stopPropagation();
     if (subTranslatePopover) subTranslatePopover.hidden = true;
   });
-  subTransLangSelect?.addEventListener("change", () => {
+  subTransLangSelect?.addEventListener("change", (event) => {
+    event.stopPropagation();
     const target = subTransLangSelect.value;
     runSubTranslation(target);
   });
-  subTransCopy?.addEventListener("click", async () => {
+  subTransCopy?.addEventListener("click", async (event) => {
+    event.stopPropagation();
     if (!currentSubTranslation) return;
     await window.inputBridge.copyResult(currentSubTranslation);
     const origText = subTransCopy.textContent;
     subTransCopy.textContent = "Đã sao chép";
     setTimeout(() => { if (subTransCopy) subTransCopy.textContent = origText; }, 1200);
   });
-  subTransSpeak?.addEventListener("click", async () => {
+  subTransSpeak?.addEventListener("click", async (event) => {
+    event.stopPropagation();
     if (!currentSubTranslation) return;
     try {
       const res = await window.inputBridge.speakResult({
@@ -1014,7 +1026,11 @@ function populateSubTransLanguages() {
   }
 }
 
-async function onSubTranslateClick() {
+async function onSubTranslateClick(event) {
+  if (event) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
   const text = selectedLayoutText || getSelectedLayoutText();
   if (!text) return;
   if (subTranslatePopover) subTranslatePopover.hidden = false;
@@ -1042,10 +1058,10 @@ async function onSubTranslateClick() {
   // Determine smart default target language
   const currentAppTarget = current?.targetLanguage || "Vietnamese";
   let defaultTarget = "English";
-  if (currentAppTarget.toLowerCase() === "english") {
-    defaultTarget = "Vietnamese";
-  } else if (vietnameseEvidence(text).strong) {
+  if (isVietnameseText(text)) {
     defaultTarget = "English";
+  } else if (currentAppTarget.toLowerCase() === "english") {
+    defaultTarget = "Vietnamese";
   } else if (current?.sourceLanguage && current.sourceLanguage.toLowerCase() !== currentAppTarget.toLowerCase()) {
     defaultTarget = current.sourceLanguage;
   }
