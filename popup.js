@@ -1,5 +1,5 @@
 const DEFAULT_SETTINGS = {
-  settingsVersion: 24,
+  settingsVersion: 26,
   enabled: true,
   demoMode: false,
   engine: "google",
@@ -15,7 +15,7 @@ const DEFAULT_SETTINGS = {
   uiLanguage: "vi",
   mode: "translate",
   tone: "natural",
-  autoMode: "autoOnSend",
+  autoMode: "preview",
   livePreview: true,
   debounceMs: 700,
   minChars: 1,
@@ -44,7 +44,7 @@ const DEFAULT_SETTINGS = {
   videoSubtitleSyncOffsetMs: -450,
   videoSubtitleFontSize: 22,
   videoSubtitleSourceFontSize: 30,
-  videoSubtitleTranslationFontSize: 28,
+  videoSubtitleTranslationFontSize: 26,
   videoSubtitleSourceColor: "#ffffff",
   videoSubtitleTranslationColor: "#ffe37a",
   videoSubtitleSourceBackground: "#000000",
@@ -161,7 +161,7 @@ const VIDEO_SUBTITLE_STYLE_PRESETS = Object.freeze({
     label: "Anime",
     values: Object.freeze({
       videoSubtitleSourceFontSize: 30,
-      videoSubtitleTranslationFontSize: 28,
+      videoSubtitleTranslationFontSize: 26,
       videoSubtitleSourceColor: "#ffffff",
       videoSubtitleTranslationColor: "#ffe37a",
       videoSubtitleSourceBackground: "#000000",
@@ -231,6 +231,14 @@ let popupDebounceTimer = null;
 let lastPopupResult = "";
 let lastDetectedSourceLanguage = "";
 let popupInputTouched = false;
+let currentVideoSubtitleSession = {
+  available: false,
+  temporarilyDisabled: false,
+  globallyEnabled: false,
+  requiresNativeCaptions: false,
+  nativeCaptionsEnabled: true,
+  effectiveEnabled: false
+};
 const customSelects = new Map();
 
 function parseApiKeys(value) {
@@ -271,17 +279,172 @@ function updateApiKeyHint() {
   if ($("apiKeyHint")) $("apiKeyHint").textContent = `${count}/${LLM_API_KEY_LIMIT} configured · ${suffix}`;
 }
 
+const POPUP_DRAFT_KEY = "popupDraftState";
+let currentSpeakingButton = null;
+let currentSpeakingAudio = null;
+
 init();
 
 async function init() {
   settings = await loadSettings();
   activeOrigin = await getActiveOrigin();
+  currentVideoSubtitleSession = await getCurrentVideoSubtitleSession();
   populateLanguageSelects();
   render();
   upgradeSelects();
   bindEvents();
+  await restorePopupDraftState();
   updateToolUi();
   focusAndSelectActiveInput();
+}
+
+function stopPopupSpeech() {
+  if ("speechSynthesis" in window) {
+    try { window.speechSynthesis.cancel(); } catch {}
+  }
+  if (currentSpeakingAudio) {
+    try {
+      currentSpeakingAudio.pause();
+      currentSpeakingAudio.currentTime = 0;
+    } catch {}
+    currentSpeakingAudio = null;
+  }
+  if (currentSpeakingButton) {
+    currentSpeakingButton.classList.remove("is-speaking");
+    currentSpeakingButton = null;
+  }
+}
+
+async function speakPopupText(text, languageNameOrCode, buttonEl) {
+  const content = String(text || "").trim();
+  if (!content) return;
+
+  if (currentSpeakingButton === buttonEl) {
+    stopPopupSpeech();
+    return;
+  }
+
+  stopPopupSpeech();
+  currentSpeakingButton = buttonEl;
+  if (buttonEl) buttonEl.classList.add("is-speaking");
+
+  const langCode = (LANGUAGE_CATALOG?.codeFor(languageNameOrCode, "en") || languageNameOrCode || "en").toLowerCase();
+
+  // Try Web Speech API first
+  if ("speechSynthesis" in window) {
+    try {
+      const utterance = new SpeechSynthesisUtterance(content);
+      utterance.lang = langCode;
+
+      const voices = window.speechSynthesis.getVoices() || [];
+      const matched = voices.find((v) => v.lang && (v.lang.toLowerCase() === langCode.toLowerCase() || v.lang.toLowerCase().startsWith(langCode.split("-")[0])));
+      if (matched) utterance.voice = matched;
+
+      utterance.onend = () => {
+        if (currentSpeakingButton === buttonEl) {
+          buttonEl.classList.remove("is-speaking");
+          currentSpeakingButton = null;
+        }
+      };
+      utterance.onerror = () => {
+        if (currentSpeakingButton === buttonEl) {
+          buttonEl.classList.remove("is-speaking");
+          currentSpeakingButton = null;
+        }
+      };
+
+      window.speechSynthesis.speak(utterance);
+      return;
+    } catch (e) {
+      console.warn("speechSynthesis error:", e);
+    }
+  }
+
+  // Fallback to Google TTS
+  try {
+    const encoded = encodeURIComponent(content.slice(0, 200));
+    const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encoded}&tl=${langCode}&client=tw-ob`;
+    const audio = new Audio(url);
+    currentSpeakingAudio = audio;
+    audio.onended = () => {
+      if (currentSpeakingButton === buttonEl) {
+        buttonEl.classList.remove("is-speaking");
+        currentSpeakingButton = null;
+      }
+      currentSpeakingAudio = null;
+    };
+    audio.onerror = () => {
+      if (currentSpeakingButton === buttonEl) {
+        buttonEl.classList.remove("is-speaking");
+        currentSpeakingButton = null;
+      }
+      currentSpeakingAudio = null;
+    };
+    await audio.play();
+  } catch (err) {
+    stopPopupSpeech();
+  }
+}
+
+async function savePopupDraftState() {
+  const isTransEmpty = $("transResultPanel")?.classList.contains("is-empty");
+  const isWriteEmpty = $("writeResultPanel")?.classList.contains("is-empty");
+  const draft = {
+    activeTool,
+    activeWriteMode,
+    transInput: $("transInput")?.value || "",
+    transResultText: isTransEmpty ? "" : ($("transResultText")?.textContent || ""),
+    transResultMeta: $("transResultMeta")?.textContent || "",
+    transResultPhonetic: $("transResultPhonetic")?.textContent || "",
+    writeInput: $("writeInput")?.value || "",
+    writeResultText: isWriteEmpty ? "" : ($("writeResultText")?.textContent || ""),
+    writeResultMeta: $("writeResultMeta")?.textContent || "",
+    timestamp: Date.now()
+  };
+  try {
+    await chrome.storage.local.set({ [POPUP_DRAFT_KEY]: draft });
+  } catch {}
+}
+
+async function restorePopupDraftState() {
+  try {
+    const stored = await chrome.storage.local.get(POPUP_DRAFT_KEY);
+    const draft = stored?.[POPUP_DRAFT_KEY];
+    if (!draft) return;
+
+    if (draft.activeTool && (draft.activeTool === "translate" || draft.activeTool === "write")) {
+      activeTool = draft.activeTool;
+    }
+    if (draft.activeWriteMode) {
+      activeWriteMode = draft.activeWriteMode;
+    }
+
+    if (draft.transInput) {
+      if ($("transInput")) $("transInput").value = draft.transInput;
+      if ($("transSpeakInput")) $("transSpeakInput").disabled = false;
+    }
+    if (draft.transResultText && $("transResultText")) {
+      $("transResultText").textContent = draft.transResultText;
+      $("transResultPanel")?.classList.remove("is-empty");
+      if ($("transCopyResult")) $("transCopyResult").disabled = false;
+      if ($("transSpeakResult")) $("transSpeakResult").disabled = false;
+      if (draft.transResultMeta && $("transResultMeta")) $("transResultMeta").textContent = draft.transResultMeta;
+      if (draft.transResultPhonetic && $("transResultPhonetic")) $("transResultPhonetic").textContent = draft.transResultPhonetic;
+    }
+
+    if (draft.writeInput) {
+      if ($("writeInput")) $("writeInput").value = draft.writeInput;
+    }
+    if (draft.writeResultText && $("writeResultText")) {
+      $("writeResultText").textContent = draft.writeResultText;
+      $("writeResultPanel")?.classList.remove("is-empty");
+      if ($("writeCopyResult")) $("writeCopyResult").disabled = false;
+      if ($("writeSpeakResult")) $("writeSpeakResult").disabled = false;
+      if (draft.writeResultMeta && $("writeResultMeta")) $("writeResultMeta").textContent = draft.writeResultMeta;
+    }
+
+    updateCharacterCount();
+  } catch {}
 }
 
 function focusAndSelectActiveInput() {
@@ -345,6 +508,7 @@ function bindEvents() {
   $("reset").addEventListener("click", reset);
   $("toggleSite").addEventListener("click", toggleCurrentSite);
   $("toggleVideoSubtitles").addEventListener("click", toggleVideoSubtitles);
+  $("toggleCurrentVideoSubtitles")?.addEventListener("click", toggleCurrentVideoSubtitles);
   $("resetVideoSubtitlePositions")?.addEventListener("click", resetVideoSubtitlePositions);
 
   // Tab-specific actions
@@ -356,6 +520,16 @@ function bindEvents() {
 
   $("transCopyResult").addEventListener("click", copyPopupResult);
   $("writeCopyResult").addEventListener("click", copyPopupResult);
+
+  $("transSpeakInput")?.addEventListener("click", () => {
+    speakPopupText($("transInput")?.value, $("transSourceLanguage")?.value || "en", $("transSpeakInput"));
+  });
+  $("transSpeakResult")?.addEventListener("click", () => {
+    speakPopupText($("transResultText")?.textContent, $("transTargetLanguage")?.value || "vi", $("transSpeakResult"));
+  });
+  $("writeSpeakResult")?.addEventListener("click", () => {
+    speakPopupText($("writeResultText")?.textContent, "en", $("writeSpeakResult"));
+  });
 
   $("transSwapLanguages").addEventListener("click", swapLanguages);
 
@@ -381,6 +555,8 @@ function bindEvents() {
     el.addEventListener("input", () => {
       popupInputTouched = true;
       updateCharacterCount();
+      if ($("transSpeakInput")) $("transSpeakInput").disabled = !Boolean($("transInput")?.value.trim());
+      savePopupDraftState();
       if (!el.value.trim()) {
         clearPopupResult();
         return;
@@ -506,6 +682,7 @@ function showView(viewId) {
 function setActiveTool(tool) {
   if (!tool || tool === activeTool) return;
   activeTool = tool;
+  savePopupDraftState();
   updateToolUi();
   focusAndSelectActiveInput();
   const inputVal = getActiveEl("input").value.trim();
@@ -519,6 +696,7 @@ function setWriteMode(mode) {
     return;
   }
   activeWriteMode = mode;
+  savePopupDraftState();
   closeWriteModeMenu();
   updateToolUi();
 }
@@ -690,6 +868,32 @@ function render() {
     ? "video-subtitle-btn-off"
     : "video-subtitle-btn-on");
   $("toggleVideoSubtitles").classList.toggle("is-disabled", videoEnabled);
+  const currentVideoToggle = $("toggleCurrentVideoSubtitles");
+  const currentVideoTemporarilyDisabled = Boolean(currentVideoSubtitleSession.temporarilyDisabled);
+  const waitingForNativeCaptions = Boolean(
+    videoEnabled
+    && currentVideoSubtitleSession.available
+    && currentVideoSubtitleSession.requiresNativeCaptions
+    && !currentVideoSubtitleSession.nativeCaptionsEnabled
+  );
+  if (currentVideoToggle) {
+    currentVideoToggle.hidden = !currentVideoSubtitleSession.available;
+    currentVideoToggle.disabled = !videoEnabled || waitingForNativeCaptions;
+    currentVideoToggle.classList.toggle("is-active", currentVideoTemporarilyDisabled);
+    currentVideoToggle.setAttribute("aria-pressed", String(currentVideoTemporarilyDisabled));
+    const label = currentVideoToggle.querySelector("span");
+    if (label) {
+      label.textContent = getTranslation(currentVideoTemporarilyDisabled
+        ? "video-subtitle-current-on"
+        : "video-subtitle-current-off");
+      currentVideoToggle.setAttribute("aria-label", label.textContent);
+    }
+  }
+  if (currentVideoTemporarilyDisabled) {
+    $("videoSubtitleStatus").textContent = getTranslation("video-subtitle-current-status-off");
+  } else if (waitingForNativeCaptions) {
+    $("videoSubtitleStatus").textContent = getTranslation("video-subtitle-youtube-cc-off");
+  }
 
   renderPopupVideoDubbingVoiceSelect();
   localizeUI();
@@ -987,6 +1191,8 @@ function renderPopupResult(data) {
   getActiveEl("resultText").textContent = result || getTranslation("result-empty");
   getActiveEl("resultPanel").classList.toggle("is-empty", !result);
   getActiveEl("copyResult").disabled = !result;
+  const speakBtn = activeTool === "translate" ? $("transSpeakResult") : $("writeSpeakResult");
+  if (speakBtn) speakBtn.disabled = !result;
 
   if (activeTool === "translate") {
     const source = data.detectedSourceLanguage || $("transSourceLanguage").value || "Auto";
@@ -999,6 +1205,7 @@ function renderPopupResult(data) {
     $("writeResultMeta").textContent = getWriteModeLabel();
     hideDictionary();
   }
+  savePopupDraftState();
 }
 
 function renderPopupError(message) {
@@ -1009,7 +1216,10 @@ function renderPopupError(message) {
   }
   getActiveEl("resultPanel").classList.remove("is-empty");
   getActiveEl("copyResult").disabled = true;
+  const errSpeakBtn = activeTool === "translate" ? $("transSpeakResult") : $("writeSpeakResult");
+  if (errSpeakBtn) errSpeakBtn.disabled = true;
   hideDictionary();
+  savePopupDraftState();
 }
 
 function renderDictionary(data) {
@@ -1069,6 +1279,7 @@ function clearPopupInput() {
 }
 
 function clearPopupResult() {
+  stopPopupSpeech();
   getActiveEl("resultText").textContent = activeTool === "translate"
     ? getTranslation("trans-result-placeholder")
     : "";
@@ -1082,8 +1293,12 @@ function clearPopupResult() {
   getActiveEl("resultPanel").classList.remove("is-loading");
   getActiveEl("resultLoading").hidden = true;
   getActiveEl("copyResult").disabled = true;
+  if ($("transSpeakResult")) $("transSpeakResult").disabled = true;
+  if ($("writeSpeakResult")) $("writeSpeakResult").disabled = true;
+  if ($("transSpeakInput")) $("transSpeakInput").disabled = !Boolean($("transInput")?.value.trim());
   lastDetectedSourceLanguage = "";
   hideDictionary();
+  savePopupDraftState();
 }
 
 function updateCharacterCount() {
@@ -1266,6 +1481,19 @@ async function toggleVideoSubtitles() {
   setStatus(getTranslation(nextEnabled ? "status-video-on" : "status-video-off"));
 }
 
+async function toggleCurrentVideoSubtitles() {
+  const response = await sendActiveTabMessage({ type: "IB_TOGGLE_CURRENT_VIDEO_SUBTITLES" });
+  if (!response?.ok || !response.data) {
+    setStatus(getTranslation("status-video-current-unavailable"));
+    return;
+  }
+  currentVideoSubtitleSession = response.data;
+  render();
+  setStatus(getTranslation(currentVideoSubtitleSession.temporarilyDisabled
+    ? "status-video-current-off"
+    : "status-video-current-on"));
+}
+
 function collectSettings() {
   syncApiKeyFieldFromSlots();
   const next = {};
@@ -1330,6 +1558,9 @@ async function loadSettings() {
     stored.aiEnhance === true &&
     !parseApiKeys(stored.apiKey).length;
   const upgradeVideoSubtitleStyle = Number(stored.settingsVersion || 0) < 19;
+  const upgradeVideoSubtitleCompactLayout =
+    Number(stored.settingsVersion || 0) < 25 &&
+    Number(stored.videoSubtitleTranslationFontSize || 28) === 28;
   const upgradeSelectionMaxChars =
     Number(stored.settingsVersion || 0) < 22 &&
     [1000, 5000].includes(Number(stored.selectionMaxChars || 5000));
@@ -1345,7 +1576,9 @@ async function loadSettings() {
         settingsVersion: DEFAULT_SETTINGS.settingsVersion,
         minChars: 1,
         demoMode: false,
-        autoMode: "autoOnSend",
+        autoMode: ["preview", "autoReplace"].includes(stored.autoMode)
+          ? stored.autoMode
+          : "preview",
         selectionTranslation: stored.selectionTranslation ?? true,
         selectionTrigger: stored.selectionTrigger || "icon",
         selectionShiftTranslate: stored.selectionShiftTranslate ?? true,
@@ -1377,7 +1610,9 @@ async function loadSettings() {
         videoSubtitleSyncOffsetMs: Number(stored.videoSubtitleSyncOffsetMs ?? -450),
         videoSubtitleFontSize: Number(stored.videoSubtitleFontSize || 22),
         videoSubtitleSourceFontSize: upgradeVideoSubtitleStyle ? 30 : Number(stored.videoSubtitleSourceFontSize || 30),
-        videoSubtitleTranslationFontSize: upgradeVideoSubtitleStyle ? 28 : Number(stored.videoSubtitleTranslationFontSize || 28),
+        videoSubtitleTranslationFontSize: upgradeVideoSubtitleStyle || upgradeVideoSubtitleCompactLayout
+          ? 26
+          : Number(stored.videoSubtitleTranslationFontSize || 26),
         videoSubtitleSourceColor: upgradeVideoSubtitleStyle ? "#ffffff" : (/^#[0-9a-f]{6}$/i.test(stored.videoSubtitleSourceColor || "") ? stored.videoSubtitleSourceColor : "#ffffff"),
         videoSubtitleTranslationColor: upgradeVideoSubtitleStyle ? "#ffe37a" : (/^#[0-9a-f]{6}$/i.test(stored.videoSubtitleTranslationColor || "") ? stored.videoSubtitleTranslationColor : "#ffe37a"),
         videoSubtitleSourceBackground: upgradeVideoSubtitleStyle ? "#000000" : (/^#[0-9a-f]{6}$/i.test(stored.videoSubtitleSourceBackground || "") ? stored.videoSubtitleSourceBackground : "#000000"),
@@ -1409,6 +1644,26 @@ async function getActiveOrigin() {
   } catch {
     return "";
   }
+}
+
+async function sendActiveTabMessage(message) {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id || !tab.url?.startsWith("http")) return null;
+  return chrome.tabs.sendMessage(tab.id, message).catch(() => null);
+}
+
+async function getCurrentVideoSubtitleSession() {
+  const response = await sendActiveTabMessage({ type: "IB_GET_CURRENT_VIDEO_SUBTITLE_SESSION" });
+  return response?.ok && response.data
+    ? response.data
+    : {
+        available: false,
+        temporarilyDisabled: false,
+        globallyEnabled: false,
+        requiresNativeCaptions: false,
+        nativeCaptionsEnabled: true,
+        effectiveEnabled: false
+      };
 }
 
 async function notifyTabs() {
@@ -1728,6 +1983,7 @@ const TRANSLATIONS = {
     "trans-run-btn": "Dịch",
     "trans-result-meta": "Kết quả",
     "trans-copy-btn": "Sao chép",
+    "trans-speak-btn": "Đọc",
     "trans-result-placeholder": "Kết quả dịch sẽ xuất hiện tại đây.",
     "trans-dict-title": "Từ điển",
     
@@ -1757,6 +2013,11 @@ const TRANSLATIONS = {
     "video-subtitle-status-off": "Đang tắt",
     "video-subtitle-btn-on": "Bật phụ đề",
     "video-subtitle-btn-off": "Tắt phụ đề",
+    "video-subtitle-current-off": "Tắt riêng video này",
+    "video-subtitle-current-on": "Bật lại phụ đề video này",
+    "video-subtitle-current-note": "Phiên hiện tại · không lưu",
+    "video-subtitle-current-status-off": "Đã tắt riêng video này · không lưu",
+    "video-subtitle-youtube-cc-off": "Hãy bật phụ đề YouTube (CC)",
     
     "settings-eyebrow": "Nâng cao",
     "settings-title": "Cài đặt",
@@ -1767,13 +2028,13 @@ const TRANSLATIONS = {
     "settings-engine-label": "Engine mặc định",
     "settings-ui-lang-label": "Ngôn ngữ hiển thị (UI)",
     "settings-tone-label": "Tone khi bật LLM",
-    "settings-auto-label": "Auto behavior",
+    "settings-auto-label": "Cách áp dụng kết quả",
     "settings-mode-trans": "Gửi dạng ngôn ngữ",
     "settings-mode-polish": "Polish bằng LLM",
     "settings-mode-clarify": "Clarify bằng LLM",
-    "settings-auto-preview": "Chỉ xem trước",
-    "settings-auto-replace": "Tự động thay thế sau khi ngừng gõ",
-    "settings-auto-onsend": "Tự động khi gửi (Thử nghiệm)",
+    "settings-auto-preview": "Bấm Apply thủ công (mặc định)",
+    "settings-auto-replace": "Tự động Apply sau khi ngừng gõ",
+    "settings-auto-onsend": "Tự động dịch khi gửi (Thử nghiệm)",
     
     "settings-group-preview": "Xem trước và gửi",
     "settings-live-label": "Xem trước trực tiếp",
@@ -1854,6 +2115,9 @@ const TRANSLATIONS = {
     "status-site-off": "Đã tắt site này.",
     "status-video-on": "Đã bật dịch phụ đề video.",
     "status-video-off": "Đã tắt dịch phụ đề video.",
+    "status-video-current-off": "Đã tắt phụ đề riêng cho video này trong phiên hiện tại.",
+    "status-video-current-on": "Đã bật lại phụ đề cho video này.",
+    "status-video-current-unavailable": "Không tìm thấy video đang xem.",
     "status-video-position-reset": "Đã đặt lại vị trí phụ đề.",
     "status-error-failed": "Không xử lý được nội dung.",
 
@@ -1877,6 +2141,7 @@ const TRANSLATIONS = {
     "trans-run-btn": "Translate",
     "trans-result-meta": "Result",
     "trans-copy-btn": "Copy",
+    "trans-speak-btn": "Listen",
     "trans-result-placeholder": "Translation will appear here.",
     "trans-dict-title": "Dictionary",
     
@@ -1906,6 +2171,11 @@ const TRANSLATIONS = {
     "video-subtitle-status-off": "Off",
     "video-subtitle-btn-on": "Enable",
     "video-subtitle-btn-off": "Disable",
+    "video-subtitle-current-off": "Disable for this video",
+    "video-subtitle-current-on": "Re-enable for this video",
+    "video-subtitle-current-note": "Current session · not saved",
+    "video-subtitle-current-status-off": "Disabled for this video · not saved",
+    "video-subtitle-youtube-cc-off": "Turn on YouTube captions (CC)",
     
     "settings-eyebrow": "Advanced",
     "settings-title": "Settings",
@@ -1916,13 +2186,13 @@ const TRANSLATIONS = {
     "settings-engine-label": "Default Engine",
     "settings-ui-lang-label": "Display Language (UI)",
     "settings-tone-label": "Tone when LLM is active",
-    "settings-auto-label": "Auto behavior",
+    "settings-auto-label": "How to apply results",
     "settings-mode-trans": "Send as language",
     "settings-mode-polish": "Polish with LLM",
     "settings-mode-clarify": "Clarify with LLM",
-    "settings-auto-preview": "Preview only",
-    "settings-auto-replace": "Auto replace after typing stops",
-    "settings-auto-onsend": "Auto on Send (Experimental)",
+    "settings-auto-preview": "Manual Apply (default)",
+    "settings-auto-replace": "Auto Apply after typing stops",
+    "settings-auto-onsend": "Auto translate on Send (Experimental)",
     
     "settings-group-preview": "Preview & Send",
     "settings-live-label": "Live preview",
@@ -2003,6 +2273,9 @@ const TRANSLATIONS = {
     "status-site-off": "Site disabled.",
     "status-video-on": "Video subtitle translation enabled.",
     "status-video-off": "Video subtitle translation disabled.",
+    "status-video-current-off": "Subtitles disabled for this video in the current session.",
+    "status-video-current-on": "Subtitles re-enabled for this video.",
+    "status-video-current-unavailable": "No active video found.",
     "status-video-position-reset": "Subtitle positions reset.",
     "status-error-failed": "Failed to process content.",
 

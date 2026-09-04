@@ -6,10 +6,12 @@
   "description": "InputBridge desktop screen capture OCR translator for Windows",
   "main": "main.js",
   "scripts": {
-    "start": "npm run build:ocr && electron .",
+    "start": "npm run build:native && electron .",
     "start:app": "electron .",
     "build:ocr": "dotnet publish native/OcrHelper/OcrHelper.csproj -c Release -r win-x64 --self-contained true -o native/OcrHelper/publish",
-    "dist": "npm run build:ocr && electron-builder --win portable"
+    "build:speech": "dotnet publish native/SpeechHelper/SpeechHelper.csproj -c Release -r win-x64 --self-contained true -o native/SpeechHelper/publish",
+    "build:native": "npm run build:ocr && npm run build:speech",
+    "dist": "npm run build:native && electron-builder --win portable"
   },
   "devDependencies": {
     "electron": "43.1.0",
@@ -25,6 +27,7 @@
       "src/**/*",
       "assets/**/*",
       "renderer/**/*",
+      "voice-overlay/**/*",
       "selection/**/*",
       "result/**/*",
       "package.json"
@@ -35,6 +38,27 @@
         "to": "ocr",
         "filter": [
           "**/*"
+        ]
+      },
+      {
+        "from": "native/SpeechHelper/publish",
+        "to": "speech",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "native/WhisperHelper",
+        "to": "whisper",
+        "filter": [
+          "**/*.py"
+        ]
+      },
+      {
+        "from": "assets/tessdata",
+        "to": "tessdata",
+        "filter": [
+          "**/*.traineddata.gz"
         ]
       },
       {
@@ -55,6 +79,7 @@
     }
   },
   "dependencies": {
+    "tesseract.js": "^7.0.0",
     "ws": "^8.21.1"
   }
 }

@@ -56,7 +56,13 @@
             <div class="input-panel">
               <div class="panel-head">
                 <span id="transInputLabel" data-i18n="trans-input-label">Text to translate</span>
-                <button id="transClearInput" class="text-button" type="button" data-i18n="trans-clear-btn">Clear</button>
+                <div class="panel-head-actions">
+                  <button id="transSpeakInput" class="icon-text-button" type="button" title="Đọc văn bản gốc" aria-label="Đọc văn bản gốc" disabled>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+                    <span data-i18n="trans-speak-btn">Listen</span>
+                  </button>
+                  <button id="transClearInput" class="text-button" type="button" data-i18n="trans-clear-btn">Clear</button>
+                </div>
               </div>
               <textarea id="transInput" maxlength="5000" placeholder="Type or paste text here..." data-i18n="trans-input-placeholder"></textarea>
               <div class="input-footer">
@@ -71,7 +77,13 @@
                   <span id="transResultMeta" data-i18n="trans-result-meta">Result</span>
                   <small id="transResultPhonetic"></small>
                 </div>
-                <button id="transCopyResult" class="icon-text-button" type="button" disabled data-i18n="trans-copy-btn">Copy</button>
+                <div class="panel-head-actions">
+                  <button id="transSpeakResult" class="icon-text-button" type="button" title="Đọc bản dịch" aria-label="Đọc bản dịch" disabled>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+                    <span data-i18n="trans-speak-btn">Listen</span>
+                  </button>
+                  <button id="transCopyResult" class="icon-text-button" type="button" disabled data-i18n="trans-copy-btn">Copy</button>
+                </div>
               </div>
               <div id="transResultText" class="result-text" data-i18n="trans-result-placeholder">Translation will appear here.</div>
               <div id="transResultLoading" class="result-loading" hidden>
@@ -124,7 +136,13 @@
             <div id="writeResultPanel" class="write-result-panel is-empty" aria-live="polite">
               <div class="write-result-head">
                 <span id="writeResultMeta">Result</span>
-                <button id="writeCopyResult" class="icon-text-button" type="button" disabled data-i18n="write-copy-btn">Copy</button>
+                <div class="panel-head-actions">
+                  <button id="writeSpeakResult" class="icon-text-button" type="button" title="Đọc kết quả" aria-label="Đọc kết quả" disabled>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+                    <span data-i18n="trans-speak-btn">Listen</span>
+                  </button>
+                  <button id="writeCopyResult" class="icon-text-button" type="button" disabled data-i18n="write-copy-btn">Copy</button>
+                </div>
               </div>
               <div id="writeResultText" class="result-text"></div>
               <div id="writeResultLoading" class="result-loading" hidden>
@@ -151,6 +169,16 @@
             <select id="videoSubtitleQuickLanguage" aria-label="Ngôn ngữ phụ đề video"></select>
             <button id="toggleVideoSubtitles" class="site-action" type="button">Bật phụ đề</button>
           </div>
+          <button
+            id="toggleCurrentVideoSubtitles"
+            class="video-current-session-action"
+            type="button"
+            title="Chỉ áp dụng trong tab hiện tại và không lưu"
+            hidden
+          >
+            <span>Tắt riêng video này</span>
+            <small data-i18n="video-subtitle-current-note">Phiên hiện tại · không lưu</small>
+          </button>
         </section>
       </section>
 
@@ -204,11 +232,11 @@
               </select>
             </label>
             <label class="field">
-              <span data-i18n="settings-auto-label">Auto behavior</span>
+              <span data-i18n="settings-auto-label">Cách áp dụng kết quả</span>
               <select id="autoMode">
-                <option value="preview" data-i18n="settings-auto-preview">Preview only</option>
-                <option value="autoReplace" data-i18n="settings-auto-replace">Auto replace sau khi ngừng gõ</option>
-                <option value="autoOnSend" data-i18n="settings-auto-onsend">Auto on Send thử nghiệm</option>
+                <option value="preview" data-i18n="settings-auto-preview">Bấm Apply thủ công (mặc định)</option>
+                <option value="autoReplace" data-i18n="settings-auto-replace">Tự động Apply sau khi ngừng gõ</option>
+                <option value="autoOnSend" data-i18n="settings-auto-onsend">Tự động dịch khi gửi (Thử nghiệm)</option>
               </select>
             </label>
           </div>

@@ -3,7 +3,7 @@ import "./languages.js";
 const LANGUAGE_CATALOG = globalThis.InputBridgeLanguageCatalog;
 
 const DEFAULT_SETTINGS = {
-  settingsVersion: 24,
+  settingsVersion: 26,
   enabled: true,
   demoMode: false,
   engine: "google",
@@ -20,7 +20,7 @@ const DEFAULT_SETTINGS = {
   uiLanguage: "vi",
   mode: "translate",
   tone: "natural",
-  autoMode: "autoOnSend",
+  autoMode: "preview",
   livePreview: true,
   debounceMs: 700,
   minChars: 1,
@@ -49,7 +49,7 @@ const DEFAULT_SETTINGS = {
   videoSubtitleSyncOffsetMs: -450,
   videoSubtitleFontSize: 22,
   videoSubtitleSourceFontSize: 30,
-  videoSubtitleTranslationFontSize: 28,
+  videoSubtitleTranslationFontSize: 26,
   videoSubtitleSourceColor: "#ffffff",
   videoSubtitleTranslationColor: "#ffe37a",
   videoSubtitleSourceBackground: "#000000",
@@ -844,6 +844,9 @@ function migrateSettings(stored = {}) {
     stored.aiEnhance === true &&
     !getApiKeys(stored).length;
   const upgradeVideoSubtitleStyle = Number(stored.settingsVersion || 0) < 19;
+  const upgradeVideoSubtitleCompactLayout =
+    Number(stored.settingsVersion || 0) < 25 &&
+    Number(stored.videoSubtitleTranslationFontSize || 28) === 28;
   const upgradeSelectionMaxChars =
     Number(stored.settingsVersion || 0) < 22 &&
     [1000, 5000].includes(Number(stored.selectionMaxChars || 5000));
@@ -859,7 +862,9 @@ function migrateSettings(stored = {}) {
     settingsVersion: DEFAULT_SETTINGS.settingsVersion,
     minChars: 1,
     demoMode: false,
-    autoMode: "autoOnSend",
+    autoMode: ["preview", "autoReplace"].includes(stored.autoMode)
+      ? stored.autoMode
+      : "preview",
     selectionTranslation: stored.selectionTranslation ?? true,
     selectionTrigger: stored.selectionTrigger || "icon",
     selectionShiftTranslate: stored.selectionShiftTranslate ?? true,
@@ -891,7 +896,9 @@ function migrateSettings(stored = {}) {
     videoSubtitleSyncOffsetMs: Number(stored.videoSubtitleSyncOffsetMs ?? -450),
     videoSubtitleFontSize: Number(stored.videoSubtitleFontSize || 22),
     videoSubtitleSourceFontSize: upgradeVideoSubtitleStyle ? 30 : Number(stored.videoSubtitleSourceFontSize || 30),
-    videoSubtitleTranslationFontSize: upgradeVideoSubtitleStyle ? 28 : Number(stored.videoSubtitleTranslationFontSize || 28),
+    videoSubtitleTranslationFontSize: upgradeVideoSubtitleStyle || upgradeVideoSubtitleCompactLayout
+      ? 26
+      : Number(stored.videoSubtitleTranslationFontSize || 26),
     videoSubtitleSourceColor: upgradeVideoSubtitleStyle ? "#ffffff" : (/^#[0-9a-f]{6}$/i.test(stored.videoSubtitleSourceColor || "") ? stored.videoSubtitleSourceColor : "#ffffff"),
     videoSubtitleTranslationColor: upgradeVideoSubtitleStyle ? "#ffe37a" : (/^#[0-9a-f]{6}$/i.test(stored.videoSubtitleTranslationColor || "") ? stored.videoSubtitleTranslationColor : "#ffe37a"),
     videoSubtitleSourceBackground: upgradeVideoSubtitleStyle ? "#000000" : (/^#[0-9a-f]{6}$/i.test(stored.videoSubtitleSourceBackground || "") ? stored.videoSubtitleSourceBackground : "#000000"),

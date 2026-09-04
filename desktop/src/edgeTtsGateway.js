@@ -11,7 +11,7 @@ const VOICE_LIST_URL = `https://speech.platform.bing.com/consumer/speech/synthes
 const SYNTHESIS_URL = "wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1";
 const MAX_BODY_BYTES = 32 * 1024;
 const MAX_TEXT_CHARS = 1200;
-const REQUEST_TIMEOUT_MS = 8000;
+const REQUEST_TIMEOUT_MS = 15000;
 const VOICE_REQUEST_TIMEOUT_MS = 8000;
 const TRANSIENT_CLOSE_RETRY_LIMIT = 1;
 const VOICE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
@@ -44,9 +44,32 @@ function corsHeaders(origin = "") {
   };
 }
 
-function normalizeLocale(value, fallback = "en-US") {
-  const locale = String(value || "").trim().replace(/_/g, "-");
-  return /^[a-z]{2,3}(?:-[A-Za-z]{2,4})?$/.test(locale) ? locale : fallback;
+function normalizeLocale(value, fallback = "vi-VN") {
+  const raw = String(value || "").trim();
+  if (globalThis.InputBridgeLanguageCatalog?.codeFor) {
+    const code = globalThis.InputBridgeLanguageCatalog.codeFor(raw, "");
+    if (code) {
+      if (code === "vi") return "vi-VN";
+      if (code === "en") return "en-US";
+      if (code === "zh-CN") return "zh-CN";
+      if (code === "zh-TW") return "zh-TW";
+      if (code === "ja") return "ja-JP";
+      if (code === "ko") return "ko-KR";
+      return code;
+    }
+  }
+  const locale = raw.replace(/_/g, "-");
+  if (/^[a-z]{2,3}(?:-[A-Za-z]{2,4})?$/i.test(locale)) {
+    if (locale.toLowerCase() === "vi") return "vi-VN";
+    if (locale.toLowerCase() === "en") return "en-US";
+    return locale;
+  }
+  if (/vietnamese|tiếng việt|việt/i.test(raw)) return "vi-VN";
+  if (/english|tiếng anh|anh/i.test(raw)) return "en-US";
+  if (/japanese|tiếng nhật|nhật/i.test(raw)) return "ja-JP";
+  if (/chinese|tiếng trung|trung/i.test(raw)) return "zh-CN";
+  if (/korean|tiếng hàn|hàn/i.test(raw)) return "ko-KR";
+  return fallback;
 }
 
 function normalizeVoice(raw) {
@@ -119,6 +142,7 @@ function selectVoice(voices, locale, requestedVoice = "") {
   if (requested) {
     const exact = voices.find((voice) => voice.name === requested);
     if (exact) return exact;
+    throw new Error(`Edge TTS voice is unavailable: ${requested}`);
   }
   const candidates = voicesForLocale(voices, locale);
   if (!candidates.length) throw new Error(`Edge TTS has no voice for ${locale}`);

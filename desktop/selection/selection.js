@@ -111,6 +111,10 @@ function onPointerUp(event) {
   window.inputBridge.submitSelection({
     displayId: context.displayId,
     rect: currentRect,
+    viewport: {
+      width: window.innerWidth,
+      height: window.innerHeight
+    },
     mode: currentMode
   }).catch(() => {});
 }

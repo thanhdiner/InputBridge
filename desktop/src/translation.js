@@ -1,4 +1,4 @@
-const TRANSLATION_TIMEOUT_MS = 9000;
+const TRANSLATION_TIMEOUT_MS = 20000;
 const MAX_TEXT_CHARS = 20000;
 const CHUNK_CHARS = 4000;
 const CHUNK_WORKERS = 2;
@@ -63,23 +63,29 @@ async function translateChunked(text, sourceCode, targetCode) {
   };
 }
 
+const BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
+
 async function translateDetailed(text, sourceCode, targetCode) {
   const sourceText = String(text || "").trim();
   const cacheKey = `${sourceCode}\u0000${targetCode}\u0000${sourceText}`;
   if (cache.has(cacheKey)) return cache.get(cacheKey);
 
-  const requests = [
-    buildRequest("https://translate.google.com/translate_a/single", "it", sourceText, sourceCode, targetCode, true),
-    buildRequest("https://translate.googleapis.com/translate_a/single", "gtx", sourceText, sourceCode, targetCode, false)
+  const endpoints = [
+    `https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=${encodeURIComponent(sourceCode || "auto")}&tl=${encodeURIComponent(targetCode || "vi")}&q=${encodeURIComponent(sourceText)}`,
+    `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${encodeURIComponent(sourceCode || "auto")}&tl=${encodeURIComponent(targetCode || "vi")}&dt=t&q=${encodeURIComponent(sourceText)}`
   ];
   const errors = [];
 
-  for (const requestUrl of requests) {
+  for (const requestUrl of endpoints) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), TRANSLATION_TIMEOUT_MS);
     try {
       const response = await fetch(requestUrl, {
         method: "GET",
+        headers: {
+          "User-Agent": BROWSER_USER_AGENT,
+          "Accept": "*/*"
+        },
         credentials: "omit",
         referrerPolicy: "no-referrer",
         signal: controller.signal
@@ -100,22 +106,13 @@ async function translateDetailed(text, sourceCode, targetCode) {
   throw new Error(`Google Translate lỗi: ${errors.join(" | ")}`);
 }
 
-function buildRequest(endpoint, client, text, source, target, jsonMode) {
-  const url = new URL(endpoint);
-  url.searchParams.set("client", client);
-  url.searchParams.set("sl", source || "auto");
-  url.searchParams.set("tl", target || "vi");
-  url.searchParams.set("hl", target || "vi");
-  url.searchParams.append("dt", "t");
-  if (jsonMode) {
-    url.searchParams.set("dj", "1");
-    url.searchParams.set("source", "inputbridge-desktop");
-  }
-  url.searchParams.set("q", text);
-  return url.toString();
-}
-
 function parseGoogleResponse(json) {
+  if (Array.isArray(json?.[0]) && typeof json[0][0] === "string") {
+    return {
+      result: String(json[0][0] || "").trim(),
+      detectedSource: String(json[0][1] || "").trim()
+    };
+  }
   let result = "";
   if (Array.isArray(json?.sentences)) {
     result = json.sentences.map((sentence) => String(sentence?.trans || "")).join("").trim();
@@ -175,15 +172,51 @@ async function translateBlocks(blocks, options = {}) {
     .filter((block) => block.text);
 
   if (!normalized.length) {
-    throw new Error("OCR không nhận được block chữ nào trong vùng đã chọn.");
+    return {
+      original: "",
+      result: "",
+      detectedSourceLanguage: "Auto",
+      targetLanguage: options.targetLanguage || "Vietnamese",
+      blocks: []
+    };
   }
 
   const composite = normalized
     .map((block, index) => `[[[IB_BLOCK_${index}]]]\n${block.text}`)
-    .join("\n");
-  const translated = await translateText(composite, options);
-  const parsed = parseTranslatedBlocks(translated.result, normalized.length);
+    .join("\n\n");
 
+  let translated;
+  try {
+    translated = await translateText(composite, options);
+  } catch (err) {
+    try {
+      const plainComposite = normalized.map((b) => b.text).join("\n");
+      translated = await translateText(plainComposite, options);
+      const lines = translated.result.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+      return {
+        ...translated,
+        blocks: normalized.map((block, index) => ({
+          id: block.id,
+          original: block.text,
+          translation: lines[index] || block.text
+        }))
+      };
+    } catch {
+      return {
+        original: normalized.map((b) => b.text).join("\n"),
+        result: normalized.map((b) => b.text).join("\n"),
+        detectedSourceLanguage: "Auto",
+        targetLanguage: options.targetLanguage || "Vietnamese",
+        blocks: normalized.map((block) => ({
+          id: block.id,
+          original: block.text,
+          translation: block.text
+        }))
+      };
+    }
+  }
+
+  const parsed = parseTranslatedBlocks(translated.result, normalized.length);
   if (parsed) {
     return {
       ...translated,
@@ -195,18 +228,27 @@ async function translateBlocks(blocks, options = {}) {
     };
   }
 
-  const fallback = await translateBlocksIndividually(normalized, options);
+  const lines = translated.result
+    .replace(/\[{1,3}\s*(?:IB[_\s-]*)?BLOCK[_\s-]*\d+\s*\]{1,3}/gi, "")
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
   return {
     ...translated,
-    blocks: fallback
+    blocks: normalized.map((block, index) => ({
+      id: block.id,
+      original: block.text,
+      translation: lines[index] || block.text
+    }))
   };
 }
 
 function parseTranslatedBlocks(text, expectedCount) {
   const source = String(text || "");
-  const marker = /\[\s*\[\s*\[\s*IB[_\s-]*BLOCK[_\s-]*(\d+)\s*\]\s*\]\s*\]/gi;
+  const marker = /\[{1,3}\s*(?:IB[_\s-]*)?BLOCK[_\s-]*(\d+)\s*\]{1,3}/gi;
   const matches = Array.from(source.matchAll(marker));
-  if (matches.length < expectedCount) return null;
+  if (!matches.length) return null;
 
   const output = new Array(expectedCount).fill("");
   for (let index = 0; index < matches.length; index += 1) {
@@ -214,30 +256,15 @@ function parseTranslatedBlocks(text, expectedCount) {
     if (!Number.isInteger(blockIndex) || blockIndex < 0 || blockIndex >= expectedCount) continue;
     const start = Number(matches[index].index || 0) + matches[index][0].length;
     const end = index + 1 < matches.length ? Number(matches[index + 1].index || source.length) : source.length;
-    output[blockIndex] = source.slice(start, end).trim();
-  }
-  return output.every(Boolean) ? output : null;
-}
-
-async function translateBlocksIndividually(blocks, options) {
-  const output = new Array(blocks.length);
-  let cursor = 0;
-  const workers = Math.min(4, blocks.length);
-
-  async function worker() {
-    while (cursor < blocks.length) {
-      const index = cursor++;
-      const translated = await translateText(blocks[index].text, options);
-      output[index] = {
-        id: blocks[index].id,
-        original: blocks[index].text,
-        translation: translated.result
-      };
-    }
+    const chunk = source.slice(start, end).trim();
+    if (chunk) output[blockIndex] = chunk;
   }
 
-  await Promise.all(Array.from({ length: workers }, worker));
-  return output;
+  const filledCount = output.filter(Boolean).length;
+  if (filledCount >= Math.max(1, Math.floor(expectedCount * 0.4))) {
+    return output;
+  }
+  return null;
 }
 
 function remember(key, value) {

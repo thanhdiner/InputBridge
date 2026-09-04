@@ -40,7 +40,6 @@
       <section class="glass-card translation-card">
         <div class="section-heading compact-heading">
           <h2>Dịch</h2>
-          <span class="ready-dot" role="status" aria-label="Sẵn sàng" title="Sẵn sàng"></span>
         </div>
 
         <label class="field compact-field">
@@ -79,6 +78,30 @@
               </button>
               <button id="resetHotkeyButton" class="secondary-button" type="button">Đặt lại</button>
             </div>
+          </div>
+
+          <div class="advanced-block voice-hotkey-block">
+            <div class="advanced-label">
+              <strong>Voice input</strong>
+              <small>Nói → dịch → chèn vào ô đang focus</small>
+            </div>
+            <div class="hotkey-row">
+              <button id="voiceHotkeyRecorder" class="hotkey-recorder" type="button">
+                <span id="voiceHotkeyValue">Win + Shift + F</span>
+                <small id="voiceHotkeyHint">Bấm lần 1 để nói, lần 2 để dừng</small>
+              </button>
+              <button id="resetVoiceHotkeyButton" class="secondary-button" type="button">Đặt lại</button>
+            </div>
+            <label class="toggle-row voice-ptt-row">
+              <span>
+                <strong>Giữ Right Ctrl để nói</strong>
+                <small>Giữ 180 ms để bắt đầu · thả ra để xử lý · bấm nhanh vẫn là Ctrl bình thường</small>
+              </span>
+              <input id="pushToTalkEnabled" type="checkbox" checked>
+              <i aria-hidden="true"></i>
+            </label>
+            <button id="voiceToggleButton" class="voice-toggle-button" type="button">Bắt đầu nói</button>
+            <small id="voiceStatus" class="voice-status">Sẵn sàng · giữ Right Ctrl để nói</small>
           </div>
 
           <label class="toggle-row advanced-setting-row">

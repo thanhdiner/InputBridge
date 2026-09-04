@@ -654,24 +654,55 @@ button:active {
   font-size: 9.5px;
 }
 
+.panel-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .text-button,
 .icon-text-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   border: 0;
   color: #68717d;
   background: transparent;
   font-size: 10px;
   font-weight: 500;
   cursor: pointer;
+  padding: 2px 5px;
+  border-radius: 6px;
+  transition: color 120ms ease, background-color 120ms ease;
+}
+
+.icon-text-button svg {
+  width: 13px;
+  height: 13px;
+  fill: currentColor;
+  flex-shrink: 0;
 }
 
 .text-button:hover,
 .icon-text-button:hover:not(:disabled) {
   color: #0a72d4;
+  background: rgba(10, 114, 212, 0.08);
 }
 
 .icon-text-button:disabled {
-  opacity: 0.42;
+  opacity: 0.38;
   cursor: default;
+}
+
+.icon-text-button.is-speaking {
+  color: #0a84ff !important;
+  background: rgba(10, 132, 255, 0.12) !important;
+  animation: ib-popup-speak-pulse 1s ease-in-out infinite;
+}
+
+@keyframes ib-popup-speak-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.06); }
 }
 
 #transInput,
@@ -902,6 +933,7 @@ button:active {
 }
 
 .video-subtitle-strip {
+  flex-wrap: wrap;
   background: linear-gradient(145deg, rgba(247, 252, 255, 0.82), rgba(249, 245, 255, 0.76));
 }
 
@@ -930,6 +962,44 @@ button:active {
 
 .video-subtitle-actions .glass-select-menu {
   min-width: 210px;
+}
+
+.video-current-session-action {
+  width: 100%;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 10px;
+  border: 1px solid rgba(60, 60, 67, 0.10);
+  border-radius: 9px;
+  color: #51515a;
+  background: rgba(255, 255, 255, 0.48);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.90);
+  font: inherit;
+  cursor: pointer;
+}
+
+.video-current-session-action span {
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.video-current-session-action small {
+  color: var(--text-tertiary);
+  font-size: 9px;
+}
+
+.video-current-session-action.is-active {
+  color: #0a6ecf;
+  border-color: rgba(10, 132, 255, 0.22);
+  background: rgba(10, 132, 255, 0.08);
+}
+
+.video-current-session-action:disabled {
+  opacity: 0.48;
+  cursor: default;
 }
 
 .video-subtitle-note {

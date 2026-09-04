@@ -38,8 +38,12 @@
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["shadow-hook.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "shadow-hook.js"
+      ],
       "run_at": "document_start",
       "world": "MAIN",
       "all_frames": true,
@@ -47,9 +51,16 @@
       "match_origin_as_fallback": true
     },
     {
-      "matches": ["<all_urls>"],
-      "js": ["languages.js", "content.js"],
-      "css": ["content.css"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "languages.js",
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
       "run_at": "document_start",
       "all_frames": true,
       "match_about_blank": true,
@@ -58,8 +69,12 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["icons/icon128.png"],
-      "matches": ["<all_urls>"]
+      "resources": [
+        "icons/icon128.png"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
     }
   ],
   "declarative_net_request": {

@@ -46,7 +46,7 @@
     targetLanguage: "English",
     mode: "translate",
     tone: "natural",
-    autoMode: "autoOnSend",
+    autoMode: "preview",
     livePreview: true,
     debounceMs: 700,
     minChars: 1,
@@ -59,6 +59,7 @@
     selectionMinChars: 2,
     selectionMaxChars: 20000,
     selectionCardTheme: "light",
+    selectionSpeechRate: 1,
     videoSubtitleEnabled: false,
     videoSubtitleBilingual: false,
     videoSubtitleShowSource: false,
@@ -74,7 +75,7 @@
     videoSubtitleSyncOffsetMs: -450,
     videoSubtitleFontSize: 22,
     videoSubtitleSourceFontSize: 30,
-    videoSubtitleTranslationFontSize: 28,
+    videoSubtitleTranslationFontSize: 26,
     videoSubtitleSourceColor: "#ffffff",
     videoSubtitleTranslationColor: "#ffe37a",
     videoSubtitleSourceBackground: "#000000",
@@ -94,7 +95,7 @@
   const VIDEO_SUBTITLE_STYLE_PRESETS = Object.freeze({
     anime: Object.freeze({
       videoSubtitleSourceFontSize: 30,
-      videoSubtitleTranslationFontSize: 28,
+      videoSubtitleTranslationFontSize: 26,
       videoSubtitleSourceColor: "#ffffff",
       videoSubtitleTranslationColor: "#ffe37a",
       videoSubtitleSourceBackground: "#000000",
@@ -256,11 +257,24 @@
   let videoCaptionActiveSourceLanguageCode = "";
   let youtubeVideoControlObserver = null;
   let youtubeVideoControlSyncFrame = 0;
+  let youtubeNativeCaptionStateObserver = null;
+  let youtubeNativeCaptionStateButton = null;
+  let youtubeNativeCaptionStateSyncFrame = 0;
+  let youtubeVideoTranscriptButtonEl = null;
   let youtubeVideoControlButtonEl = null;
   let youtubeVideoDubbingButtonEl = null;
   let youtubeVideoControlPanelEl = null;
+  let youtubeLoopSentenceMode = false;
+  let youtubeAutoPauseSentenceMode = false;
+  let youtubeLoopPointA = null;
+  let youtubeLoopPointB = null;
+  let youtubeLoopABActive = false;
+  let youtubeLastAutoPausedCueIndex = -1;
   const videoCaptionTranslations = new Map();
   const videoCaptionPending = new Set();
+  const videoSubtitleElementSessionIds = new WeakMap();
+  const videoSubtitleTemporarilyDisabledSessions = new Set();
+  let videoSubtitleElementSessionId = 0;
   let videoDubbingTimer = null;
   let videoDubbingLiveTimer = null;
   let videoDubbingLivePendingCue = null;
@@ -279,9 +293,6 @@
   let videoDubbingToken = 0;
   let videoDubbingVideo = null;
   let videoDubbingSavedVolume = null;
-  let videoDubbingAlignmentHoldVideo = null;
-  let videoDubbingAlignmentHoldGeneration = 0;
-  let videoDubbingAlignmentPauseIntent = null;
   let videoDubbingResumeAfterSeekVideo = null;
   let videoDubbingSessionId = 0;
   let videoDubbingSessionState = "idle";
@@ -290,20 +301,26 @@
   let videoDubbingSessionStatus = "";
   let extensionTornDown = false;
   let videoDubbingSessionStartIndex = -1;
-  let videoDubbingBufferRefillPromise = null;
+  let videoDubbingBackgroundBufferPromise = null;
+  let videoDubbingBackgroundBufferTimer = null;
+  let videoDubbingBackgroundBufferNextCheckAt = 0;
   const videoDubbingConsumedCueKeys = new Set();
   const videoDubbingAudioCache = new Map();
   const videoDubbingAudioRequests = new Map();
+  const videoDubbingAudioReadyWaiters = new Map();
   const videoDubbingAudioFailures = new Map();
+  const videoDubbingTranslationFailures = new Map();
   const videoDubbingVoicesByLanguage = new Map();
   const videoDubbingVoiceRequests = new Map();
-  const VIDEO_DUBBING_AUDIO_CACHE_LIMIT = 24;
-  const VIDEO_DUBBING_INITIAL_BUFFER_SECONDS = 12;
-  const VIDEO_DUBBING_REFILL_BUFFER_SECONDS = 18;
-  const VIDEO_DUBBING_BUFFER_MAX_CUES = 8;
+  const VIDEO_DUBBING_AUDIO_CACHE_LIMIT = 48;
+  const VIDEO_DUBBING_INITIAL_BUFFER_SECONDS = 24;
+  const VIDEO_DUBBING_BACKGROUND_BUFFER_SECONDS = 42;
+  const VIDEO_DUBBING_INITIAL_BUFFER_MAX_CUES = 16;
+  const VIDEO_DUBBING_BACKGROUND_BUFFER_MAX_CUES = 20;
+  const VIDEO_DUBBING_MAX_PLAYBACK_RATE = 4;
   const VIDEO_DUBBING_TIMELINE_TIMEOUT_MS = 6000;
   const VIDEO_DUBBING_TRANSLATION_TIMEOUT_MS = 25000;
-  const VIDEO_DUBBING_AUDIO_BUFFER_TIMEOUT_MS = 30000;
+  const VIDEO_DUBBING_AUDIO_BUFFER_TIMEOUT_MS = 60000;
   const VIDEO_DUBBING_LIVE_MAX_WAIT_MS = 1400;
   const VIDEO_DUBBING_LIVE_QUEUE_LIMIT = 3;
   const VIDEO_PLAYER_CAPTION_INITIAL_COMMIT_MS = 70;
@@ -314,6 +331,8 @@
   const VIDEO_SUBTITLE_VAD_MIN_ENERGY = 0.004;
   const VIDEO_SUBTITLE_LIVE_SYNC_LEAD_WORDS = 2.4;
   const VIDEO_SUBTITLE_POSITION_STORAGE_KEY = "videoSubtitlePositionsByOrigin";
+  const VIDEO_SUBTITLE_POSITION_LAYOUT_VERSION_KEY = "videoSubtitlePositionLayoutVersion";
+  const VIDEO_SUBTITLE_POSITION_LAYOUT_VERSION = 2;
 
   init();
 
@@ -351,15 +370,23 @@
     window.addEventListener("resize", () => applyVideoSubtitleItemPositions(), true);
     window.addEventListener("message", onVideoCaptionBridgeMessage);
     document.addEventListener("pointerdown", onYouTubeControlDocumentPointerDown, true);
+    document.addEventListener("click", onYouTubeTranscriptSegmentClick, true);
     document.addEventListener("keydown", onYouTubeControlDocumentKeyDown, true);
+    document.addEventListener("loadedmetadata", onAnyVideoMetadataLoaded, true);
     document.addEventListener("yt-navigate-start", onYouTubeVideoControlNavigation, true);
     document.addEventListener("yt-navigate-finish", onYouTubeVideoControlNavigation, true);
 
-    chrome.runtime.onMessage.addListener((message) => {
+    chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (message?.type === "IB_SETTINGS_UPDATED") refreshSettings("settings-updated");
       if (message?.type === "IB_RESET_VIDEO_SUBTITLE_POSITIONS") {
         videoSubtitleDragPositions = null;
         applyVideoSubtitleItemPositions();
+      }
+      if (message?.type === "IB_GET_CURRENT_VIDEO_SUBTITLE_SESSION") {
+        sendResponse?.({ ok: true, data: getCurrentVideoSubtitleSessionState() });
+      }
+      if (message?.type === "IB_TOGGLE_CURRENT_VIDEO_SUBTITLES") {
+        sendResponse?.({ ok: true, data: toggleCurrentVideoSubtitleTemporaryDisabled() });
       }
     });
 
@@ -463,7 +490,10 @@
       &&
       IS_TOP_FRAME
       && settings.enabled
-      && (settings.videoSubtitleEnabled || isVideoDubbingSessionRequested())
+      && (
+        shouldDisplayCurrentVideoSubtitles()
+        || isVideoDubbingSessionRequested()
+      )
     );
   }
 
@@ -471,14 +501,20 @@
     if (extensionTornDown) return;
     syncYouTubeVideoControl();
     const active = shouldRunVideoSubtitleFeature();
-    setNativeVideoCaptionsHidden(Boolean(settings.videoSubtitleEnabled || isVideoDubbingSessionRequested()));
+    setNativeVideoCaptionsHidden(Boolean(
+      shouldDisplayCurrentVideoSubtitles()
+      || isVideoDubbingSessionRequested()
+    ));
     if (active) startVideoSubtitleFeature();
     else stopVideoSubtitleFeature();
   }
 
   function startVideoSubtitleFeature() {
     if (!IS_TOP_FRAME) return;
-    setNativeVideoCaptionsHidden(Boolean(settings.videoSubtitleEnabled || isVideoDubbingSessionRequested()));
+    setNativeVideoCaptionsHidden(Boolean(
+      shouldDisplayCurrentVideoSubtitles()
+      || isVideoDubbingSessionRequested()
+    ));
 
     if (!videoSubtitleObserver && document.documentElement) {
       videoSubtitleObserver = new MutationObserver(() => {
@@ -510,7 +546,6 @@
 
   function stopVideoSubtitleFeature() {
     videoDubbingResumeAfterSeekVideo = null;
-    resetVideoDubbingAlignmentPauseIntent();
     cancelYouTubeCaptionTimelineRequest();
     videoSubtitleObserver?.disconnect();
     videoSubtitleObserver = null;
@@ -549,8 +584,8 @@
 
   function onVideoSubtitleNavigation() {
     videoDubbingResumeAfterSeekVideo = null;
-    resetVideoDubbingAlignmentPauseIntent();
     if (!shouldRunVideoSubtitleFeature()) return;
+    const needsFeatureRestart = !videoSubtitleObserver;
     videoDubbingConsumedCueKeys.clear();
     resetVideoDubbingLiveState();
     stopVideoDubbing(true);
@@ -570,7 +605,14 @@
     videoPlayerCaptionExpiredText = "";
     videoCaptionTranslations.clear();
     videoCaptionPending.clear();
-    setNativeVideoCaptionsHidden(Boolean(settings.videoSubtitleEnabled || isVideoDubbingSessionRequested()));
+    setNativeVideoCaptionsHidden(Boolean(
+      shouldDisplayCurrentVideoSubtitles()
+      || isVideoDubbingSessionRequested()
+    ));
+    if (needsFeatureRestart) {
+      startVideoSubtitleFeature();
+      return;
+    }
     bindVideoCaptionSources();
     ensureYouTubeVideoControl();
     ensureVideoSubtitleOverlay();
@@ -589,6 +631,11 @@
     ensureVideoSubtitleOverlay(true);
   }
 
+  function onAnyVideoMetadataLoaded(event) {
+    if (!(event.target instanceof HTMLVideoElement)) return;
+    syncVideoSubtitleFeature();
+  }
+
   function bindVideoCaptionSources() {
     document.querySelectorAll("video").forEach((video) => {
       if (!videoElementBindings.has(video)) {
@@ -596,14 +643,13 @@
         video.addEventListener("seeking", () => {
           if (video !== getPrimaryVideo() && video !== videoDubbingVideo) return;
           const dubbingSessionWasRequested = isVideoDubbingSessionRequested();
-          const shouldResumeAfterAlignmentSeek = Boolean(
+          const shouldResumeAfterSeek = Boolean(
             videoDubbingResumeAfterSeekVideo === video
             || (
               dubbingSessionWasRequested
               && (
                 videoDubbingSessionWasPlaying
                 || !video.paused
-                || video === videoDubbingAlignmentHoldVideo
                 || videoDubbingSessionState === "running"
               )
             )
@@ -622,17 +668,17 @@
           hideVideoSubtitleOverlay();
           // stopVideoDubbingSession clears terminal resume intents. Set this
           // one afterwards, and preserve it across repeated seeking events.
-          videoDubbingResumeAfterSeekVideo = shouldResumeAfterAlignmentSeek ? video : null;
+          videoDubbingResumeAfterSeekVideo = shouldResumeAfterSeek ? video : null;
         });
         video.addEventListener("seeked", () => {
-          const shouldResumeAfterAlignmentSeek = video === videoDubbingResumeAfterSeekVideo;
-          if (shouldResumeAfterAlignmentSeek) videoDubbingResumeAfterSeekVideo = null;
+          const shouldResumeAfterSeek = video === videoDubbingResumeAfterSeekVideo;
+          if (shouldResumeAfterSeek) videoDubbingResumeAfterSeekVideo = null;
           resetYouTubeCaptionReader();
           lastVideoCaptionText = "";
           hideVideoSubtitleOverlay();
           scheduleVideoCaptionRead(0);
           syncVideoDubbing("seeked");
-          if (shouldResumeAfterAlignmentSeek) {
+          if (shouldResumeAfterSeek) {
             void startVideoDubbingSession({ resumePlayback: true });
           }
         });
@@ -643,17 +689,10 @@
         });
         video.addEventListener("timeupdate", () => {
           scheduleVideoCaptionRead(0);
+          scheduleVideoDubbingBackgroundBuffer();
           syncVideoDubbing("timeupdate");
         });
         video.addEventListener("playing", () => {
-          if (video === videoDubbingAlignmentHoldVideo) {
-            requestVideoDubbingAlignmentPause(video);
-            return;
-          }
-          // Media pause/play events are ordered, so reaching a real playing
-          // event means any internal alignment pause has been consumed. Avoid
-          // letting a stale marker swallow the user's next genuine pause.
-          clearVideoDubbingAlignmentPauseIntent(video);
           if (video === videoDubbingSessionVideo && isVideoDubbingSessionPreparing()) {
             try { video.pause(); } catch {}
             return;
@@ -663,14 +702,11 @@
           }
           requestYouTubeCaptionTimeline();
           scheduleVideoCaptionRead(0);
+          scheduleVideoDubbingBackgroundBuffer(0, { force: true });
           if (hasPendingVideoDubbingLiveCue()) schedulePendingLiveVideoDubbing(0);
           syncVideoDubbing("playing");
         });
         video.addEventListener("pause", () => {
-          // A long translated sentence can briefly hold the video so its audio
-          // finishes before the next caption starts. This is not a user pause.
-          const internalAlignmentPause = consumeVideoDubbingAlignmentPauseIntent(video);
-          if (video === videoDubbingAlignmentHoldVideo || internalAlignmentPause) return;
           if (video === videoDubbingResumeAfterSeekVideo) {
             if (video.seeking) return;
             videoDubbingResumeAfterSeekVideo = null;
@@ -684,19 +720,11 @@
         });
         video.addEventListener("ratechange", () => {
           if (video !== getPrimaryVideo() && video !== videoDubbingVideo) return;
-          // While alignment is holding the picture, the TTS clock is independent
-          // of the video's rate. Keep the sentence playing and apply the new
-          // video rate when playback resumes instead of restarting the sentence.
-          if (
-            video === videoDubbingAlignmentHoldVideo
-            && (videoDubbingAudio || videoDubbingUtterance)
-          ) return;
           stopVideoDubbing(false);
           syncVideoDubbing("ratechange");
         });
         video.addEventListener("ended", () => {
           if (video === videoDubbingResumeAfterSeekVideo) videoDubbingResumeAfterSeekVideo = null;
-          clearVideoDubbingAlignmentPauseIntent(video);
           if (video !== getPrimaryVideo() && video !== videoDubbingVideo) return;
           if (isVideoDubbingSessionRequested()) stopVideoDubbingSession({ resumeOriginal: false });
           else stopVideoDubbing(true);
@@ -853,6 +881,90 @@
         const rightRect = right.getBoundingClientRect();
         return (rightRect.width * rightRect.height) - (leftRect.width * leftRect.height);
       })[0] || null;
+  }
+
+  function getVideoSubtitleSessionKey(video = getPrimaryVideo()) {
+    if (!video) return "";
+
+    if (/(^|\.)youtube\.com$/i.test(location.hostname)) {
+      const url = new URL(location.href);
+      const pathVideoId = url.pathname.match(/^\/(?:shorts|embed|live)\/([^/?#]+)/i)?.[1] || "";
+      const videoId = url.searchParams.get("v") || pathVideoId;
+      if (videoId) return `youtube:${videoId}`;
+    }
+
+    let elementId = videoSubtitleElementSessionIds.get(video);
+    if (!elementId) {
+      elementId = ++videoSubtitleElementSessionId;
+      videoSubtitleElementSessionIds.set(video, elementId);
+    }
+    const pageKey = `${location.origin}${location.pathname}${location.search}`;
+    const sourceKey = String(video.currentSrc || video.src || "");
+    return `html5:${pageKey}\u0000${elementId}\u0000${sourceKey}`;
+  }
+
+  function getCurrentVideoSubtitleSessionState() {
+    const video = getPrimaryVideo();
+    const sessionKey = getVideoSubtitleSessionKey(video);
+    const temporarilyDisabled = Boolean(
+      sessionKey && videoSubtitleTemporarilyDisabledSessions.has(sessionKey)
+    );
+    const globallyEnabled = Boolean(settings.enabled && settings.videoSubtitleEnabled);
+    const requiresNativeCaptions = isYouTubeVideoPage();
+    const nativeCaptionsEnabled = isCurrentPlayerCaptionTrackEnabled();
+    return {
+      available: Boolean(video && sessionKey),
+      temporarilyDisabled,
+      globallyEnabled,
+      requiresNativeCaptions,
+      nativeCaptionsEnabled,
+      effectiveEnabled: Boolean(globallyEnabled && !temporarilyDisabled && nativeCaptionsEnabled)
+    };
+  }
+
+  function isCurrentVideoSubtitleTemporarilyDisabled() {
+    return getCurrentVideoSubtitleSessionState().temporarilyDisabled;
+  }
+
+  function isCurrentPlayerCaptionTrackEnabled() {
+    if (!isYouTubeVideoPage()) return true;
+    const button = document.querySelector(".html5-video-player .ytp-subtitles-button");
+    if (!button) return false;
+    const pressed = button.getAttribute("aria-pressed");
+    if (pressed !== null) return pressed === "true";
+    return button.classList.contains("ytp-subtitles-button-active");
+  }
+
+  function shouldDisplayCurrentVideoSubtitles() {
+    return Boolean(
+      settings.videoSubtitleEnabled
+      && !isCurrentVideoSubtitleTemporarilyDisabled()
+      && isCurrentPlayerCaptionTrackEnabled()
+    );
+  }
+
+  function toggleCurrentVideoSubtitleTemporaryDisabled() {
+    const video = getPrimaryVideo();
+    const sessionKey = getVideoSubtitleSessionKey(video);
+    if (!sessionKey) return getCurrentVideoSubtitleSessionState();
+
+    const temporarilyDisabled = !videoSubtitleTemporarilyDisabledSessions.has(sessionKey);
+    if (temporarilyDisabled) {
+      if (videoSubtitleTemporarilyDisabledSessions.size >= 32) {
+        const oldestKey = videoSubtitleTemporarilyDisabledSessions.values().next().value;
+        if (oldestKey) videoSubtitleTemporarilyDisabledSessions.delete(oldestKey);
+      }
+      videoSubtitleTemporarilyDisabledSessions.add(sessionKey);
+      videoSubtitleRequestSeq += 1;
+      lastVideoCaptionText = "";
+      hideVideoSubtitleOverlay();
+    } else {
+      videoSubtitleTemporarilyDisabledSessions.delete(sessionKey);
+    }
+
+    syncVideoSubtitleFeature();
+    updateYouTubeVideoControl();
+    return getCurrentVideoSubtitleSessionState();
   }
 
   function getVideoSubtitleSyncOffsetSeconds() {
@@ -1075,12 +1187,17 @@
     });
   }
 
-  function collectVideoDubbingBufferIndices(startIndex, horizonSeconds = VIDEO_DUBBING_INITIAL_BUFFER_SECONDS) {
+  function collectVideoDubbingBufferIndices(
+    startIndex,
+    horizonSeconds = VIDEO_DUBBING_INITIAL_BUFFER_SECONDS,
+    maxCues = VIDEO_DUBBING_INITIAL_BUFFER_MAX_CUES
+  ) {
     const timeline = getVideoDubbingTimeline();
     if (!timeline.length || startIndex < 0) return [];
     const videoTime = getVideoSubtitleLookupTime(videoDubbingSessionVideo?.currentTime || 0);
     const indices = [];
-    for (let index = startIndex; index < timeline.length && indices.length < VIDEO_DUBBING_BUFFER_MAX_CUES; index += 1) {
+    const cueLimit = Math.max(1, Math.min(20, Number(maxCues || VIDEO_DUBBING_INITIAL_BUFFER_MAX_CUES)));
+    for (let index = startIndex; index < timeline.length && indices.length < cueLimit; index += 1) {
       const cue = getVideoDubbingCue(index);
       if (!cue || Number(cue.end || 0) <= videoTime + 0.04) continue;
       indices.push(index);
@@ -1090,12 +1207,26 @@
     return indices;
   }
 
-  async function prepareVideoDubbingTranslations(indices, sessionId) {
+  function isVideoDubbingTranslationBackedOff(index) {
+    const key = getVideoCaptionCueCacheKey(index);
+    const retryAt = Number(videoDubbingTranslationFailures.get(key) || 0);
+    if (!retryAt) return false;
+    if (retryAt <= Date.now()) {
+      videoDubbingTranslationFailures.delete(key);
+      return false;
+    }
+    return true;
+  }
+
+  async function prepareVideoDubbingTranslations(indices, sessionId, { updateStatus = true } = {}) {
     if (!indices.length || videoCaptionTargetMatchesSource()) return;
-    const missing = indices.filter((index) => !getVideoDubbingCue(index)?.text);
+    const missing = indices.filter((index) => (
+      !getVideoDubbingCue(index)?.text
+      && (updateStatus || !isVideoDubbingTranslationBackedOff(index))
+    ));
     if (!missing.length) return;
 
-    setVideoDubbingSessionState("translating", `Đang dịch ${missing.length} câu đầu…`);
+    if (updateStatus) setVideoDubbingSessionState("translating", `Đang dịch ${missing.length} câu đầu…`);
     const items = missing.map((index) => {
       const cue = videoCaptionTimeline[index];
       const id = getVideoCaptionCueCacheKey(index);
@@ -1124,7 +1255,14 @@
               result: item.result,
               engine: item.engine || ""
             });
+            videoDubbingTranslationFailures.delete(item.id);
           }
+        }
+      } catch (error) {
+        if (sessionId !== videoDubbingSessionId) throw new Error("Đã hủy chuẩn bị lồng tiếng");
+        if (updateStatus) throw error;
+        for (const item of items) {
+          videoDubbingTranslationFailures.set(item.id, Date.now() + 5000);
         }
       } finally {
         for (const item of items) videoCaptionPending.delete(item.id);
@@ -1132,40 +1270,138 @@
     }
 
     const unresolved = indices.filter((index) => !getVideoDubbingCue(index)?.text);
-    if (unresolved.length) throw new Error("Không dịch đủ phụ đề để tạo đoạn đệm");
+    if (unresolved.length && updateStatus) throw new Error("Không dịch đủ phụ đề để tạo đoạn đệm");
+    if (!updateStatus) {
+      for (const index of unresolved) {
+        const key = getVideoCaptionCueCacheKey(index);
+        if (key) videoDubbingTranslationFailures.set(key, Date.now() + 5000);
+      }
+    }
   }
 
-  async function prepareVideoDubbingAudioBuffer(indices, sessionId) {
+  async function prepareVideoDubbingAudioBuffer(indices, sessionId, { updateStatus = true } = {}) {
     if (!indices.length) throw new Error("Không tìm thấy câu phụ đề ở vị trí hiện tại");
     let readyCount = 0;
-    setVideoDubbingSessionState("buffering", `Đang tạo giọng đọc 0/${indices.length}…`);
+    if (updateStatus) setVideoDubbingSessionState("buffering", `Đang tạo giọng đọc 0/${indices.length}…`);
     let next = 0;
     const worker = async () => {
       while (next < indices.length) {
+        if (sessionId !== videoDubbingSessionId) throw new Error("Đã hủy chuẩn bị lồng tiếng");
         const index = indices[next];
         next += 1;
         const cue = getVideoDubbingCue(index);
         const cueKey = getVideoDubbingCueKey(cue);
-        if (!cue?.text || !cueKey) throw new Error("Phụ đề chưa sẵn sàng để tạo giọng đọc");
-        await requestVideoDubbingAudio(cue, cueKey, { manualSession: true });
+        if (!cue?.text || !cueKey) {
+          if (updateStatus) throw new Error("Phụ đề chưa sẵn sàng để tạo giọng đọc");
+          continue;
+        }
+        if (!updateStatus && isVideoDubbingAudioFailed(cueKey)) continue;
+        try {
+          await requestVideoDubbingAudio(cue, cueKey, { manualSession: true });
+        } catch (error) {
+          if (sessionId !== videoDubbingSessionId) throw new Error("Đã hủy chuẩn bị lồng tiếng");
+          if (updateStatus) throw error;
+          videoDubbingAudioFailures.set(cueKey, Date.now() + 5000);
+          continue;
+        }
         if (sessionId !== videoDubbingSessionId) throw new Error("Đã hủy chuẩn bị lồng tiếng");
         readyCount += 1;
-        setVideoDubbingSessionState("buffering", `Đang tạo giọng đọc ${readyCount}/${indices.length}…`);
+        if (updateStatus) {
+          setVideoDubbingSessionState("buffering", `Đang tạo giọng đọc ${readyCount}/${indices.length}…`);
+        }
       }
     };
     await Promise.all(Array.from({ length: Math.min(2, indices.length) }, () => worker()));
   }
 
-  async function prepareVideoDubbingBuffer(startIndex, sessionId, horizonSeconds) {
-    const indices = collectVideoDubbingBufferIndices(startIndex, horizonSeconds);
+  async function prepareVideoDubbingBuffer(startIndex, sessionId, horizonSeconds, {
+    maxCues = VIDEO_DUBBING_INITIAL_BUFFER_MAX_CUES,
+    updateStatus = true
+  } = {}) {
+    const indices = collectVideoDubbingBufferIndices(startIndex, horizonSeconds, maxCues);
     if (!indices.length) throw new Error("Không có phụ đề tiếp theo để lồng tiếng");
-    await prepareVideoDubbingTranslations(indices, sessionId);
-    await withVideoDubbingTimeout(
-      prepareVideoDubbingAudioBuffer(indices, sessionId),
-      VIDEO_DUBBING_AUDIO_BUFFER_TIMEOUT_MS,
-      "Tạo giọng đọc quá thời gian"
-    );
+    await prepareVideoDubbingTranslations(indices, sessionId, { updateStatus });
+    const audioBufferTask = prepareVideoDubbingAudioBuffer(indices, sessionId, { updateStatus });
+    if (updateStatus) {
+      await withVideoDubbingTimeout(
+        audioBufferTask,
+        VIDEO_DUBBING_AUDIO_BUFFER_TIMEOUT_MS,
+        "Tạo giọng đọc quá thời gian"
+      );
+    } else {
+      // Each individual provider request already has a bounded timeout. Let the
+      // rolling worker finish so a second refill cannot overlap it after a
+      // foreground-oriented aggregate timeout expires.
+      await audioBufferTask;
+    }
     return indices;
+  }
+
+  function resetVideoDubbingBackgroundBuffer() {
+    if (videoDubbingBackgroundBufferTimer) clearTimeout(videoDubbingBackgroundBufferTimer);
+    videoDubbingBackgroundBufferTimer = null;
+    videoDubbingBackgroundBufferPromise = null;
+    videoDubbingBackgroundBufferNextCheckAt = 0;
+    videoDubbingAudioReadyWaiters.clear();
+    videoDubbingTranslationFailures.clear();
+  }
+
+  function videoDubbingBufferNeedsWork(indices) {
+    return indices.some((index) => {
+      const cue = getVideoDubbingCue(index);
+      if (!cue?.text) return !isVideoDubbingTranslationBackedOff(index);
+      const cueKey = getVideoDubbingCueKey(cue);
+      if (cueKey && isVideoDubbingAudioFailed(cueKey)) return false;
+      return Boolean(
+        cueKey
+        && !videoDubbingAudioCache.has(cueKey)
+        && !videoDubbingAudioRequests.has(cueKey)
+      );
+    });
+  }
+
+  function scheduleVideoDubbingBackgroundBuffer(delayMs = 0, { force = false } = {}) {
+    if (!isVideoDubbingSessionArmed() || videoDubbingBackgroundBufferPromise || videoDubbingBackgroundBufferTimer) return;
+    const now = Date.now();
+    if (!force && videoDubbingBackgroundBufferNextCheckAt > now) return;
+    videoDubbingBackgroundBufferNextCheckAt = now + 900;
+
+    videoDubbingBackgroundBufferTimer = window.setTimeout(() => {
+      videoDubbingBackgroundBufferTimer = null;
+      if (!isVideoDubbingSessionArmed()) return;
+      const video = videoDubbingSessionVideo || getPrimaryVideo();
+      if (!video || video.ended || video.seeking) return;
+      const startIndex = findVideoDubbingCueIndex(video.currentTime);
+      const indices = collectVideoDubbingBufferIndices(
+        startIndex,
+        VIDEO_DUBBING_BACKGROUND_BUFFER_SECONDS,
+        VIDEO_DUBBING_BACKGROUND_BUFFER_MAX_CUES
+      );
+      if (!indices.length || !videoDubbingBufferNeedsWork(indices)) return;
+
+      const sessionId = videoDubbingSessionId;
+      let nextDelayMs = 1200;
+      const request = prepareVideoDubbingBuffer(
+        startIndex,
+        sessionId,
+        VIDEO_DUBBING_BACKGROUND_BUFFER_SECONDS,
+        {
+          maxCues: VIDEO_DUBBING_BACKGROUND_BUFFER_MAX_CUES,
+          updateStatus: false
+        }
+      ).catch(() => {
+        if (sessionId === videoDubbingSessionId && isVideoDubbingSessionArmed()) {
+          nextDelayMs = 2000;
+        }
+      }).finally(() => {
+        if (videoDubbingBackgroundBufferPromise === request) videoDubbingBackgroundBufferPromise = null;
+        if (sessionId === videoDubbingSessionId && isVideoDubbingSessionArmed()) {
+          scheduleVideoDubbingBackgroundBuffer(nextDelayMs);
+          syncVideoDubbing("background-buffer-ready");
+        }
+      });
+      videoDubbingBackgroundBufferPromise = request;
+    }, Math.max(0, Number(delayMs || 0)));
   }
 
   function resetVideoDubbingTimelineForPreparation() {
@@ -1202,7 +1438,7 @@
     videoDubbingResumeAfterSeekVideo = null;
     cancelYouTubeCaptionTimelineRequest();
     videoDubbingSessionId += 1;
-    videoDubbingBufferRefillPromise = null;
+    resetVideoDubbingBackgroundBuffer();
     videoDubbingSessionVideo = null;
     videoDubbingSessionWasPlaying = false;
     videoDubbingSessionStartIndex = -1;
@@ -1222,7 +1458,7 @@
     videoDubbingResumeAfterSeekVideo = null;
     cancelYouTubeCaptionTimelineRequest();
     videoDubbingSessionId += 1;
-    videoDubbingBufferRefillPromise = null;
+    resetVideoDubbingBackgroundBuffer();
     videoDubbingSessionVideo = null;
     videoDubbingSessionWasPlaying = false;
     videoDubbingSessionStartIndex = -1;
@@ -1246,7 +1482,6 @@
       return;
     }
     videoDubbingResumeAfterSeekVideo = null;
-    resetVideoDubbingAlignmentPauseIntent();
 
     const wasPlaying = resumePlayback === null
       ? !video.paused && !video.ended
@@ -1295,7 +1530,9 @@
       }
       if (startIndex < 0) throw new Error("Không còn phụ đề ở vị trí hiện tại");
       videoDubbingSessionStartIndex = startIndex;
-      await prepareVideoDubbingBuffer(startIndex, sessionId, VIDEO_DUBBING_INITIAL_BUFFER_SECONDS);
+      await prepareVideoDubbingBuffer(startIndex, sessionId, VIDEO_DUBBING_INITIAL_BUFFER_SECONDS, {
+        maxCues: VIDEO_DUBBING_INITIAL_BUFFER_MAX_CUES
+      });
       if (sessionId !== videoDubbingSessionId) return;
       if (video !== videoDubbingSessionVideo || !video.isConnected || video !== getPrimaryVideo()) {
         stopVideoDubbingSession({ resumeOriginal: false });
@@ -1303,6 +1540,7 @@
       }
 
       setVideoDubbingSessionState("ready", wasPlaying ? "Đã sẵn sàng · đang phát video…" : "Đã sẵn sàng · bấm Play để xem");
+      scheduleVideoDubbingBackgroundBuffer(0, { force: true });
       if (wasPlaying) {
         try {
           await video.play();
@@ -1325,45 +1563,10 @@
     if (isVideoDubbingSessionRequested()) {
       stopVideoDubbingSession({
         resumeOriginal: isVideoDubbingSessionPreparing()
-          || videoDubbingAlignmentHoldVideo === videoDubbingSessionVideo
       });
       return;
     }
     void startVideoDubbingSession();
-  }
-
-  function pauseAndRefillVideoDubbingBuffer(startIndex) {
-    if (videoDubbingBufferRefillPromise || !isVideoDubbingSessionArmed()) return videoDubbingBufferRefillPromise;
-    const sessionId = videoDubbingSessionId;
-    const video = videoDubbingSessionVideo || getPrimaryVideo();
-    if (!video) return null;
-    const shouldResume = !video.paused && !video.ended;
-    if (shouldResume) videoDubbingSessionWasPlaying = true;
-    try { video.pause(); } catch {}
-    stopVideoDubbing(true);
-    setVideoDubbingSessionState("buffering", "Đang nạp thêm giọng đọc…");
-    const request = prepareVideoDubbingBuffer(startIndex, sessionId, VIDEO_DUBBING_REFILL_BUFFER_SECONDS)
-      .then(async () => {
-        if (sessionId !== videoDubbingSessionId) return;
-        setVideoDubbingSessionState("ready", shouldResume ? "Đã nạp xong · đang phát video…" : "Đã nạp xong · bấm Play để xem");
-        if (shouldResume) {
-          try {
-            await video.play();
-            if (sessionId === videoDubbingSessionId) {
-              setVideoDubbingSessionState("running", "Đang lồng tiếng");
-              syncVideoDubbing("buffer-refilled");
-            }
-          } catch {
-            if (sessionId === videoDubbingSessionId) setVideoDubbingSessionState("ready", "Đã nạp xong · bấm Play để tiếp tục");
-          }
-        }
-      })
-      .catch((error) => failVideoDubbingSession(error?.message || String(error), sessionId))
-      .finally(() => {
-        if (videoDubbingBufferRefillPromise === request) videoDubbingBufferRefillPromise = null;
-      });
-    videoDubbingBufferRefillPromise = request;
-    return request;
   }
 
   function getVideoDubbingLanguageKey() {
@@ -1378,6 +1581,7 @@
   }
 
   function clearVideoDubbingAudioCache() {
+    resetVideoDubbingBackgroundBuffer();
     videoDubbingAudioCache.clear();
     videoDubbingAudioRequests.clear();
     videoDubbingAudioFailures.clear();
@@ -1737,90 +1941,8 @@
       }
     }
   }
-  function clearVideoDubbingAlignmentHold() {
-    const video = videoDubbingAlignmentHoldVideo;
-    videoDubbingAlignmentHoldVideo = null;
-    return video;
-  }
-  function resetVideoDubbingAlignmentPauseIntent() {
-    videoDubbingAlignmentHoldGeneration += 1;
-    videoDubbingAlignmentPauseIntent = null;
-  }
-  function clearVideoDubbingAlignmentPauseIntent(video = null) {
-    if (!video || videoDubbingAlignmentPauseIntent?.video === video) {
-      videoDubbingAlignmentPauseIntent = null;
-    }
-  }
-  function requestVideoDubbingAlignmentPause(video) {
-    if (!video || video.paused) return false;
-    const now = Date.now();
-    const previousIntent = videoDubbingAlignmentPauseIntent;
-    const canExtend = Boolean(
-      previousIntent
-      && previousIntent.video === video
-      && previousIntent.generation === videoDubbingAlignmentHoldGeneration
-      && previousIntent.expiresAt > now
-    );
-    videoDubbingAlignmentPauseIntent = {
-      video,
-      generation: videoDubbingAlignmentHoldGeneration,
-      pendingCount: canExtend ? previousIntent.pendingCount + 1 : 1,
-      expiresAt: now + 1500
-    };
-    try {
-      video.pause();
-      return true;
-    } catch {
-      videoDubbingAlignmentPauseIntent = previousIntent;
-      return false;
-    }
-  }
-  function consumeVideoDubbingAlignmentPauseIntent(video) {
-    const intent = videoDubbingAlignmentPauseIntent;
-    if (!intent || intent.video !== video) return false;
-    if (intent.expiresAt <= Date.now() || intent.pendingCount < 1) {
-      videoDubbingAlignmentPauseIntent = null;
-      return false;
-    }
-    const pendingCount = intent.pendingCount - 1;
-    videoDubbingAlignmentPauseIntent = pendingCount > 0
-      ? { ...intent, pendingCount }
-      : null;
-    return true;
-  }
-  function beginVideoDubbingAlignmentHold(video) {
-    if (!video || video.paused || video.seeking || video.ended) return false;
-    videoDubbingAlignmentHoldGeneration += 1;
-    videoDubbingAlignmentHoldVideo = video;
-    if (video === videoDubbingSessionVideo) videoDubbingSessionWasPlaying = true;
-    if (!requestVideoDubbingAlignmentPause(video)) {
-      videoDubbingAlignmentHoldVideo = null;
-      return false;
-    }
-    return true;
-  }
-  async function resumeVideoDubbingAlignmentHold(video) {
-    if (
-      !video
-      || video !== videoDubbingSessionVideo
-      || !isVideoDubbingSessionArmed()
-      || !videoDubbingSessionWasPlaying
-    ) return false;
-    const resumed = await resumeOriginalVideoAfterDubbingStop(video, true);
-    if (
-      !resumed
-      && video === videoDubbingSessionVideo
-      && video.paused
-      && videoDubbingSessionState === "running"
-    ) {
-      videoDubbingSessionWasPlaying = false;
-      setVideoDubbingSessionState("ready", "Đã chuẩn bị · bấm Play để tiếp tục");
-    }
-    return resumed;
-  }
   function stopVideoDubbing(restoreOriginal = false) {
     const activeUtterance = videoDubbingUtterance;
-    clearVideoDubbingAlignmentHold();
     videoDubbingToken += 1;
     clearVideoDubbingTimer();
     videoDubbingActiveCueKey = "";
@@ -1924,6 +2046,25 @@
       void requestVideoDubbingAudio(cue, cueKey, { manualSession: true }).catch(() => {});
     }
   }
+  function waitForVideoDubbingAudioWithoutPausing(cue, cueKey) {
+    if (!cue?.text || !cueKey || videoDubbingAudioReadyWaiters.has(cueKey)) return;
+    const sessionId = videoDubbingSessionId;
+    videoDubbingAudioReadyWaiters.set(cueKey, sessionId);
+    void requestVideoDubbingAudio(cue, cueKey, { manualSession: true })
+      .catch(() => {
+        if (sessionId === videoDubbingSessionId) {
+          videoDubbingAudioFailures.set(cueKey, Date.now() + 5000);
+        }
+      })
+      .finally(() => {
+        if (videoDubbingAudioReadyWaiters.get(cueKey) === sessionId) {
+          videoDubbingAudioReadyWaiters.delete(cueKey);
+        }
+        if (sessionId === videoDubbingSessionId && isVideoDubbingSessionArmed()) {
+          syncVideoDubbing("audio-ready-without-pause");
+        }
+      });
+  }
   function waitForVideoDubbingAudioMetadata(audio, timeoutMs = 900) {
     if (audio.readyState >= 1 && Number.isFinite(audio.duration)) return Promise.resolve();
     return new Promise((resolve) => {
@@ -2019,6 +2160,11 @@
 
     const audio = new Audio(audioUrl);
     audio.preload = "auto";
+    // Let automatic dubbing speed changes affect timbre as well, matching the
+    // selection-reader behavior the user hears at different speed levels.
+    audio.preservesPitch = false;
+    if ("webkitPreservesPitch" in audio) audio.webkitPreservesPitch = false;
+    if ("mozPreservesPitch" in audio) audio.mozPreservesPitch = false;
     videoDubbingAudio = audio;
     videoDubbingAudioPendingKey = "";
     videoDubbingAudioPendingCue = null;
@@ -2027,7 +2173,6 @@
 
     const finish = (failed = false, completed = false) => {
       if (token !== videoDubbingToken || videoDubbingAudio !== audio) return;
-      const alignmentHoldVideo = clearVideoDubbingAlignmentHold();
       clearVideoDubbingTimer();
       videoDubbingAudio = null;
       videoDubbingActiveCueKey = "";
@@ -2054,12 +2199,7 @@
       }
       if (isLiveCue && hasPendingVideoDubbingLiveCue()) schedulePendingLiveVideoDubbing(failed ? 220 : 40);
       const syncReason = failed ? "audio-error" : "audio-finished";
-      if (alignmentHoldVideo) {
-        void resumeVideoDubbingAlignmentHold(alignmentHoldVideo)
-          .finally(() => syncVideoDubbing(syncReason));
-      } else {
-        window.setTimeout(() => syncVideoDubbing(syncReason), 0);
-      }
+      window.setTimeout(() => syncVideoDubbing(syncReason), 0);
     };
     audio.onended = () => finish(false, true);
     audio.onerror = () => finish(true);
@@ -2078,15 +2218,11 @@
       ? Math.max(0.8, estimateVideoDubbingSpeechSeconds(cue.text) / playbackRate)
       : Math.max(0.08, (cue.end - refreshedTimelineTime) / playbackRate);
     if (Number.isFinite(audio.duration) && audio.duration > 0) {
-      audio.preservesPitch = true;
       const requiredRate = audio.duration / availableWallSeconds;
-      audio.playbackRate = clampNumber(requiredRate, 0.95, 2.35, 1);
-      // If even the maximum intelligible rate cannot fit before the next cue,
-      // hold the picture on this caption instead of letting its voice drift
-      // into the following caption.
-      if (!isLiveCue && requiredRate > 2.35 + 0.01) {
-        beginVideoDubbingAlignmentHold(video);
-      }
+      // Prefer continuous video playback. Speed long translations toward their
+      // caption budget (up to the safe media-rate cap) instead of freezing the
+      // picture until TTS catches up.
+      audio.playbackRate = clampNumber(requiredRate, 0.95, VIDEO_DUBBING_MAX_PLAYBACK_RATE, 1);
     }
 
     try {
@@ -2098,7 +2234,6 @@
     if (token !== videoDubbingToken || videoDubbingAudio !== audio) return;
     if (
       !isLiveCue
-      && videoDubbingAlignmentHoldVideo !== video
       && Number.isFinite(audio.duration)
       && audio.duration > 0
     ) {
@@ -2114,8 +2249,7 @@
       const remainingWallSeconds = Math.max(0.04, remainingVideoSeconds / playbackRate);
       const remainingAudioSeconds = Math.max(0.01, audio.duration - Number(audio.currentTime || 0));
       const activeRequiredRate = remainingAudioSeconds / remainingWallSeconds;
-      audio.playbackRate = clampNumber(activeRequiredRate, 0.95, 2.35, 1);
-      if (activeRequiredRate > 2.35 + 0.01) beginVideoDubbingAlignmentHold(video);
+      audio.playbackRate = clampNumber(activeRequiredRate, 0.95, VIDEO_DUBBING_MAX_PLAYBACK_RATE, 1);
     }
     setVideoDubbingActiveCueDiagnostic(cue);
     setVideoDubbingState("playing");
@@ -2127,15 +2261,9 @@
     const remainingWallMs = getVideoDubbingWatchdogMs(expectedWallSeconds);
     videoDubbingTimer = window.setTimeout(() => {
       if (token !== videoDubbingToken || videoDubbingAudio !== audio) return;
-      const alignmentHoldVideo = clearVideoDubbingAlignmentHold();
       if (!isLiveCue) videoDubbingConsumedCueKeys.add(cueKey);
       stopVideoDubbing(false);
-      if (alignmentHoldVideo) {
-        void resumeVideoDubbingAlignmentHold(alignmentHoldVideo)
-          .finally(() => syncVideoDubbing("audio-timeout"));
-      } else {
-        syncVideoDubbing("audio-timeout");
-      }
+      syncVideoDubbing("audio-timeout");
     }, remainingWallMs);
   }
   function speakVideoDubbingCue(video, cue, cueKey) {
@@ -2158,9 +2286,9 @@
     const utterance = new SpeechSynthesisUtterance(cue.text);
     utterance.lang = voice.lang || language;
     utterance.voice = voice;
-    utterance.pitch = 1;
     utterance.volume = 1;
     utterance.rate = getVideoDubbingRate(cue.text, cue.end - getVideoSubtitleLookupTime(video.currentTime), video);
+    utterance.pitch = clampNumber(1 + (utterance.rate - 1) * 0.2, 0.78, 1.45, 1);
     videoDubbingUtterance = utterance;
     videoDubbingActiveCueKey = cueKey;
     setVideoDubbingActiveCueDiagnostic(cue);
@@ -2224,11 +2352,6 @@
       return;
     }
     const video = getPrimaryVideo();
-    if (
-      video
-      && video === videoDubbingAlignmentHoldVideo
-      && (videoDubbingAudio || videoDubbingUtterance)
-    ) return;
     if (!video || video.paused || video.seeking || video.ended) {
       if (videoDubbingUtterance || videoDubbingAudio || videoDubbingAudioPendingKey || videoDubbingTimer || videoDubbingVideo) {
         stopVideoDubbing(true);
@@ -2328,7 +2451,12 @@
         continue;
       }
       if (!videoDubbingAudioCache.has(cueKey)) {
-        pauseAndRefillVideoDubbingBuffer(index);
+        // Startup and the rolling high-water buffer should normally make this
+        // path rare. If the network still falls behind, keep the picture moving
+        // and join the in-flight request; a late cue is preferable to freezing
+        // the video in the middle of playback.
+        scheduleVideoDubbingBackgroundBuffer(0, { force: true });
+        waitForVideoDubbingAudioWithoutPausing(cue, cueKey);
         return;
       }
       if (videoDubbingAudioPendingKey === cueKey) return;
@@ -3086,8 +3214,8 @@
   function getDefaultVideoSubtitleDragPositions() {
     const top = settings.videoSubtitlePosition === "top";
     return top
-      ? { source: { x: 50, y: 14 }, translation: { x: 50, y: 24 } }
-      : { source: { x: 50, y: 76 }, translation: { x: 50, y: 86 } };
+      ? { source: { x: 50, y: 19 }, translation: { x: 50, y: 24 } }
+      : { source: { x: 50, y: 81 }, translation: { x: 50, y: 86 } };
   }
 
   function sanitizeVideoSubtitlePosition(value, fallback) {
@@ -3107,9 +3235,33 @@
 
   async function loadVideoSubtitleDragPositions() {
     if (videoSubtitlePositionLoadPromise) return videoSubtitlePositionLoadPromise;
-    videoSubtitlePositionLoadPromise = chrome.storage.local.get(VIDEO_SUBTITLE_POSITION_STORAGE_KEY)
-      .then((stored) => {
-        const byOrigin = stored?.[VIDEO_SUBTITLE_POSITION_STORAGE_KEY] || {};
+    videoSubtitlePositionLoadPromise = chrome.storage.local.get([
+      VIDEO_SUBTITLE_POSITION_STORAGE_KEY,
+      VIDEO_SUBTITLE_POSITION_LAYOUT_VERSION_KEY
+    ])
+      .then(async (stored) => {
+        let byOrigin = stored?.[VIDEO_SUBTITLE_POSITION_STORAGE_KEY] || {};
+        const storedLayoutVersion = Number(stored?.[VIDEO_SUBTITLE_POSITION_LAYOUT_VERSION_KEY] || 0);
+        if (storedLayoutVersion < VIDEO_SUBTITLE_POSITION_LAYOUT_VERSION) {
+          const sourceShift = storedLayoutVersion < 1 ? 5 : 4;
+          byOrigin = Object.fromEntries(
+            Object.entries(byOrigin).map(([origin, positions]) => {
+              const source = positions?.source;
+              if (!source || !Number.isFinite(Number(source.y))) return [origin, positions];
+              return [origin, {
+                ...positions,
+                source: {
+                  ...source,
+                  y: clampNumber(Number(source.y) + sourceShift, 0, 100, 81)
+                }
+              }];
+            })
+          );
+          await chrome.storage.local.set({
+            [VIDEO_SUBTITLE_POSITION_STORAGE_KEY]: byOrigin,
+            [VIDEO_SUBTITLE_POSITION_LAYOUT_VERSION_KEY]: VIDEO_SUBTITLE_POSITION_LAYOUT_VERSION
+          });
+        }
         videoSubtitleDragPositions = byOrigin[getPageOrigin()] || null;
         applyVideoSubtitleItemPositions();
       })
@@ -3228,7 +3380,7 @@
     karaokeEnd = null,
     karaokeMode = ""
   } = {}) {
-    if (!settings.videoSubtitleEnabled) {
+    if (!shouldDisplayCurrentVideoSubtitles()) {
       hideVideoSubtitleOverlay();
       return;
     }
@@ -4310,7 +4462,6 @@
     if (extensionTornDown) return;
     extensionTornDown = true;
     videoDubbingResumeAfterSeekVideo = null;
-    resetVideoDubbingAlignmentPauseIntent();
     console.log("[InputBridge] Orphaned extension script detected. Tearing down...");
 
     const orphanedSessionVideo = videoDubbingSessionVideo;
@@ -4322,7 +4473,7 @@
     // Invalidate every async prepare/refill continuation without calling the
     // normal session stop path, which would try to rebuild UI during teardown.
     videoDubbingSessionId += 1;
-    videoDubbingBufferRefillPromise = null;
+    resetVideoDubbingBackgroundBuffer();
     videoDubbingSessionVideo = null;
     videoDubbingSessionWasPlaying = false;
     videoDubbingSessionStartIndex = -1;
@@ -4335,18 +4486,21 @@
     stopVideoDubbing(true);
     setNativeVideoCaptionsHidden(false);
     if (youtubeVideoControlSyncFrame) cancelAnimationFrame(youtubeVideoControlSyncFrame);
+    if (youtubeNativeCaptionStateSyncFrame) cancelAnimationFrame(youtubeNativeCaptionStateSyncFrame);
     if (videoSubtitleTimer) clearTimeout(videoSubtitleTimer);
     if (videoSubtitleEmptyTimer) clearTimeout(videoSubtitleEmptyTimer);
     teardownVideoSubtitleAudioVad();
     
     videoSubtitleObserver?.disconnect();
     youtubeVideoControlObserver?.disconnect();
+    youtubeNativeCaptionStateObserver?.disconnect();
 
     window.removeEventListener("scroll", onViewportScroll, true);
     window.removeEventListener("resize", repositionAll, true);
     window.removeEventListener("message", onVideoCaptionBridgeMessage);
     document.removeEventListener("pointerdown", onYouTubeControlDocumentPointerDown, true);
     document.removeEventListener("keydown", onYouTubeControlDocumentKeyDown, true);
+    document.removeEventListener("loadedmetadata", onAnyVideoMetadataLoaded, true);
     document.removeEventListener("yt-navigate-start", onYouTubeVideoControlNavigation, true);
     document.removeEventListener("yt-navigate-finish", onYouTubeVideoControlNavigation, true);
     document.removeEventListener("yt-navigate-finish", onVideoSubtitleNavigation, true);
@@ -4355,6 +4509,8 @@
 
     try {
       videoSubtitleEl?.remove();
+      youtubeVideoTranscriptButtonEl?.remove();
+      youtubeVideoTranscriptButtonEl = null;
       youtubeVideoDubbingButtonEl?.remove();
       youtubeVideoControlButtonEl?.remove();
       youtubeVideoControlPanelEl?.remove();
@@ -4442,21 +4598,31 @@
   function syncYouTubeVideoControl() {
     if (extensionTornDown) return;
     if (!isYouTubeVideoPage()) {
+      youtubeNativeCaptionStateObserver?.disconnect();
+      youtubeNativeCaptionStateObserver = null;
+      youtubeNativeCaptionStateButton = null;
+      if (youtubeNativeCaptionStateSyncFrame) cancelAnimationFrame(youtubeNativeCaptionStateSyncFrame);
+      youtubeNativeCaptionStateSyncFrame = 0;
       youtubeVideoControlObserver?.disconnect();
       youtubeVideoControlObserver = null;
       if (youtubeVideoControlSyncFrame) cancelAnimationFrame(youtubeVideoControlSyncFrame);
       youtubeVideoControlSyncFrame = 0;
+      youtubeVideoTranscriptButtonEl?.remove();
       youtubeVideoDubbingButtonEl?.remove();
       youtubeVideoControlButtonEl?.remove();
       youtubeVideoControlPanelEl?.remove();
+      youtubeVideoTranscriptButtonEl = null;
       youtubeVideoDubbingButtonEl = null;
       youtubeVideoControlButtonEl = null;
       youtubeVideoControlPanelEl = null;
       return;
     }
 
+    syncYouTubeNativeCaptionStateObserver();
+
     if (
-      youtubeVideoDubbingButtonEl?.isConnected
+      youtubeVideoTranscriptButtonEl?.isConnected
+      && youtubeVideoDubbingButtonEl?.isConnected
       && youtubeVideoControlButtonEl?.isConnected
       && youtubeVideoControlPanelEl?.isConnected
     ) {
@@ -4474,6 +4640,32 @@
     scheduleYouTubeVideoControlSync();
   }
 
+  function syncYouTubeNativeCaptionStateObserver() {
+    const button = document.querySelector(".html5-video-player .ytp-subtitles-button");
+    if (
+      button
+      && button === youtubeNativeCaptionStateButton
+      && youtubeNativeCaptionStateObserver
+    ) return;
+
+    youtubeNativeCaptionStateObserver?.disconnect();
+    youtubeNativeCaptionStateObserver = null;
+    youtubeNativeCaptionStateButton = button || null;
+    if (!button) return;
+
+    youtubeNativeCaptionStateObserver = new MutationObserver(() => {
+      if (youtubeNativeCaptionStateSyncFrame) return;
+      youtubeNativeCaptionStateSyncFrame = requestAnimationFrame(() => {
+        youtubeNativeCaptionStateSyncFrame = 0;
+        syncVideoSubtitleFeature();
+      });
+    });
+    youtubeNativeCaptionStateObserver.observe(button, {
+      attributes: true,
+      attributeFilter: ["aria-pressed", "class"]
+    });
+  }
+
   function scheduleYouTubeVideoControlSync() {
     if (extensionTornDown) return;
     if (youtubeVideoControlSyncFrame) return;
@@ -4483,22 +4675,371 @@
     });
   }
 
+
+  function formatLooperTime(seconds) {
+    if (typeof seconds !== "number" || isNaN(seconds) || seconds < 0) return "--:--";
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    const ms = Math.floor((seconds % 1) * 10);
+    return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}.${ms}`;
+  }
+
+  function getActiveOrNearestCueIndex(currentTime, timeline = videoCaptionTimeline) {
+    if (!timeline || !timeline.length) return -1;
+    const lookupTime = getVideoSubtitleLookupTime(currentTime);
+    let low = 0, high = timeline.length - 1, nearestIndex = -1;
+    while (low <= high) {
+      const middle = (low + high) >> 1;
+      if (timeline[middle].start <= lookupTime + 0.05) {
+        nearestIndex = middle;
+        low = middle + 1;
+      } else {
+        high = middle - 1;
+      }
+    }
+    if (nearestIndex >= 0) {
+      const cue = timeline[nearestIndex];
+      if (lookupTime <= cue.end + 0.5) return nearestIndex;
+      if (nearestIndex + 1 < timeline.length && timeline[nearestIndex + 1].start - lookupTime < 2) {
+        return nearestIndex + 1;
+      }
+    }
+    return nearestIndex >= 0 ? nearestIndex : 0;
+  }
+
+  function replayCurrentSentence() {
+    const video = getPrimaryVideo();
+    if (!video) return;
+    const currentTime = Number(video.currentTime || 0);
+    if (!videoCaptionTimeline || !videoCaptionTimeline.length) {
+      video.currentTime = Math.max(0, currentTime - 3);
+      if (video.paused) try { video.play(); } catch {}
+      showToast("↺ Đã lùi 3s");
+      return;
+    }
+    const cueIndex = getActiveOrNearestCueIndex(currentTime);
+    if (cueIndex >= 0 && videoCaptionTimeline[cueIndex]) {
+      const cue = videoCaptionTimeline[cueIndex];
+      video.currentTime = Math.max(0, cue.start);
+      if (video.paused) try { video.play(); } catch {}
+      const snippet = cue.text ? cue.text.slice(0, 45) + (cue.text.length > 45 ? "..." : "") : "Câu hiện tại";
+      showToast(`↺ Nghe lại: "${snippet}"`);
+    } else {
+      video.currentTime = Math.max(0, currentTime - 3);
+      if (video.paused) try { video.play(); } catch {}
+      showToast("↺ Đã lùi 3s");
+    }
+    updateYouTubeVideoControl();
+  }
+
+  function goToPreviousSentence() {
+    const video = getPrimaryVideo();
+    if (!video) return;
+    const currentTime = Number(video.currentTime || 0);
+    if (!videoCaptionTimeline || !videoCaptionTimeline.length) {
+      video.currentTime = Math.max(0, currentTime - 5);
+      if (video.paused) try { video.play(); } catch {}
+      showToast("⏮ Đã lùi 5s");
+      return;
+    }
+    const currentIdx = getActiveOrNearestCueIndex(currentTime);
+    let targetIdx = currentIdx;
+    if (currentIdx >= 0 && videoCaptionTimeline[currentIdx]) {
+      const cue = videoCaptionTimeline[currentIdx];
+      targetIdx = (currentTime - cue.start > 1.2 || currentIdx === 0) ? currentIdx : Math.max(0, currentIdx - 1);
+    } else {
+      targetIdx = Math.max(0, videoCaptionTimeline.length - 1);
+    }
+    const targetCue = videoCaptionTimeline[targetIdx];
+    if (targetCue) {
+      video.currentTime = Math.max(0, targetCue.start);
+      if (video.paused) try { video.play(); } catch {}
+      const snippet = targetCue.text ? targetCue.text.slice(0, 40) + "..." : "";
+      showToast(`⏮ Câu trước: "${snippet}"`);
+    }
+    updateYouTubeVideoControl();
+  }
+
+  function goToNextSentence() {
+    const video = getPrimaryVideo();
+    if (!video) return;
+    const currentTime = Number(video.currentTime || 0);
+    if (!videoCaptionTimeline || !videoCaptionTimeline.length) {
+      video.currentTime = Math.min(video.duration || currentTime + 5, currentTime + 5);
+      if (video.paused) try { video.play(); } catch {}
+      showToast("⏭ Đã tiến 5s");
+      return;
+    }
+    const currentIdx = getActiveOrNearestCueIndex(currentTime);
+    const targetIdx = Math.min(videoCaptionTimeline.length - 1, currentIdx + 1);
+    const targetCue = videoCaptionTimeline[targetIdx];
+    if (targetCue) {
+      video.currentTime = Math.max(0, targetCue.start);
+      if (video.paused) try { video.play(); } catch {}
+      const snippet = targetCue.text ? targetCue.text.slice(0, 40) + "..." : "";
+      showToast(`⏭ Câu sau: "${snippet}"`);
+    }
+    updateYouTubeVideoControl();
+  }
+
+  function toggleLoopCurrentSentence(forced) {
+    youtubeLoopSentenceMode = typeof forced === "boolean" ? forced : !youtubeLoopSentenceMode;
+    if (youtubeLoopSentenceMode) {
+      youtubeLoopABActive = false;
+      const video = getPrimaryVideo();
+      if (video && video.paused) try { video.play(); } catch {}
+      showToast("🔂 Đã BẬT lặp câu hiện tại");
+    } else {
+      showToast("Đã TẮT lặp câu");
+    }
+    updateYouTubeVideoControl();
+  }
+
+  function toggleAutoPauseSentence(forced) {
+    youtubeAutoPauseSentenceMode = typeof forced === "boolean" ? forced : !youtubeAutoPauseSentenceMode;
+    youtubeLastAutoPausedCueIndex = -1;
+    showToast(youtubeAutoPauseSentenceMode ? "⏸ Đã BẬT tự dừng sau mỗi câu (Shadowing)" : "Đã TẮT tự dừng sau mỗi câu");
+    updateYouTubeVideoControl();
+  }
+
+  function setLoopPointA() {
+    const video = getPrimaryVideo();
+    if (!video) return;
+    youtubeLoopPointA = Number(video.currentTime.toFixed(1));
+    if (typeof youtubeLoopPointB === "number" && youtubeLoopPointA >= youtubeLoopPointB) youtubeLoopPointB = null;
+    showToast(`📍 Điểm A: ${formatLooperTime(youtubeLoopPointA)} (Nhấn ']' để đặt điểm B)`);
+    updateYouTubeVideoControl();
+  }
+
+  function setLoopPointB() {
+    const video = getPrimaryVideo();
+    if (!video) return;
+    youtubeLoopPointB = Number(video.currentTime.toFixed(1));
+    if (typeof youtubeLoopPointA !== "number" || youtubeLoopPointA >= youtubeLoopPointB) {
+      youtubeLoopPointA = Math.max(0, youtubeLoopPointB - 5);
+    }
+    youtubeLoopABActive = true;
+    youtubeLoopSentenceMode = false;
+    if (video.paused) try { video.play(); } catch {}
+    showToast(`🔁 Đang lặp A-B: [${formatLooperTime(youtubeLoopPointA)} ➔ ${formatLooperTime(youtubeLoopPointB)}]`);
+    updateYouTubeVideoControl();
+  }
+
+  function clearLoopAB() {
+    youtubeLoopPointA = null;
+    youtubeLoopPointB = null;
+    youtubeLoopABActive = false;
+    showToast("Đã xóa mốc lặp A-B");
+    updateYouTubeVideoControl();
+  }
+
+  function toggleLoopAB() {
+    if (typeof youtubeLoopPointA === "number" && typeof youtubeLoopPointB === "number") {
+      youtubeLoopABActive = !youtubeLoopABActive;
+      if (youtubeLoopABActive) {
+        youtubeLoopSentenceMode = false;
+        const video = getPrimaryVideo();
+        if (video && video.paused) try { video.play(); } catch {}
+        showToast(`🔁 Bật lặp A-B: [${formatLooperTime(youtubeLoopPointA)} ➔ ${formatLooperTime(youtubeLoopPointB)}]`);
+      } else {
+        showToast("Tắt lặp A-B");
+      }
+    } else {
+      setLoopPointA();
+    }
+    updateYouTubeVideoControl();
+  }
+
+  function checkYouTubeLooperPlayback(video) {
+    if (!video || video.paused || video.seeking) return;
+    const currentTime = Number(video.currentTime || 0);
+
+    if (youtubeLoopABActive && typeof youtubeLoopPointA === "number" && typeof youtubeLoopPointB === "number") {
+      if (youtubeLoopPointB > youtubeLoopPointA && (currentTime >= youtubeLoopPointB || currentTime < youtubeLoopPointA - 0.5)) {
+        video.currentTime = youtubeLoopPointA;
+        return;
+      }
+    }
+
+    if ((youtubeLoopSentenceMode || youtubeAutoPauseSentenceMode) && videoCaptionTimeline?.length) {
+      const cueIndex = findTimelineCueIndex(currentTime);
+      if (cueIndex >= 0) {
+        const cue = videoCaptionTimeline[cueIndex];
+        if (youtubeLoopSentenceMode && cue?.start !== undefined && cue?.end !== undefined) {
+          if (currentTime >= cue.end - 0.05) {
+            video.currentTime = Math.max(0, cue.start);
+            return;
+          }
+        }
+        if (youtubeAutoPauseSentenceMode && cue?.end !== undefined) {
+          if (currentTime >= cue.end - 0.10 && youtubeLastAutoPausedCueIndex !== cueIndex) {
+            youtubeLastAutoPausedCueIndex = cueIndex;
+            try {
+              video.pause();
+              showToast("⏸ Đã dừng câu · Nhấn Space để tiếp tục");
+            } catch {}
+            return;
+          }
+        }
+      }
+    }
+  }
+
+
+  function onYouTubeTranscriptSegmentClick(event) {
+    const target = event.target instanceof Element ? event.target : null;
+    const transcriptSegment = target?.closest?.(
+      "ytd-transcript-segment-renderer, [class*='transcript-segment'], [target-id='engagement-panel-searchable-transcript'] button, ytd-transcript-renderer button"
+    );
+    if (!transcriptSegment) return;
+    const video = getPrimaryVideo();
+    if (!video) return;
+
+    videoDubbingConsumedCueKeys.clear();
+    stopVideoDubbing(false);
+
+    window.setTimeout(() => {
+      if (video.paused) {
+        video.play().catch(() => {});
+      }
+      syncVideoDubbing("transcript-click");
+    }, 40);
+  }
+
+  function toggleYouTubeNativeTranscript() {
+    const watchFlexy = document.querySelector("ytd-watch-flexy[role='main']:not([hidden])")
+      || document.querySelector("ytd-watch-flexy")
+      || document;
+
+    document.querySelectorAll(".ib-youtube-transcript-preload").forEach((el) => {
+      el.classList.remove("ib-youtube-transcript-preload");
+    });
+    const preloadStyle = document.getElementById("inputbridge-youtube-transcript-preload-style");
+    if (preloadStyle) preloadStyle.remove();
+
+    const transcriptPanel = watchFlexy.querySelector(
+      "ytd-engagement-panel-section-list-renderer[target-id='engagement-panel-searchable-transcript'], ytd-engagement-panel-section-list-renderer[target-id='PAmodern_transcript_view'], yt-section-list-renderer[data-target-id='PAmodern_transcript_view']"
+    ) || [...watchFlexy.querySelectorAll("ytd-engagement-panel-section-list-renderer")].find((p) => {
+      const target = (p.getAttribute("target-id") || "").toLowerCase();
+      return target.includes("transcript");
+    });
+
+    const isExpanded = Boolean(
+      transcriptPanel
+      && (
+        transcriptPanel.getAttribute("visibility") === "ENGAGEMENT_PANEL_VISIBILITY_EXPANDED"
+        || transcriptPanel.visibility === "ENGAGEMENT_PANEL_VISIBILITY_EXPANDED"
+      )
+    );
+
+    if (isExpanded && transcriptPanel) {
+      const closeBtn = transcriptPanel.querySelector(
+        "#visibility-button button, yt-icon-button#visibility-button, [aria-label*='Đóng'], [aria-label*='Close'], #header button"
+      );
+      if (closeBtn) closeBtn.click();
+      else {
+        try { transcriptPanel.setAttribute("visibility", "ENGAGEMENT_PANEL_VISIBILITY_HIDDEN"); } catch {}
+        try { transcriptPanel.visibility = "ENGAGEMENT_PANEL_VISIBILITY_HIDDEN"; } catch {}
+      }
+      return;
+    }
+
+    const clickNativeTranscriptButton = () => {
+      const descTranscriptBtn = watchFlexy.querySelector(
+        "ytd-video-description-transcript-section-renderer button, #panels ytd-video-description-transcript-section-renderer button"
+      );
+      if (descTranscriptBtn) {
+        descTranscriptBtn.click();
+        return true;
+      }
+      const allButtons = [...watchFlexy.querySelectorAll("button, ytd-button-renderer")];
+      const matchBtn = allButtons.find((btn) => {
+        const text = (btn.textContent || "").toLowerCase();
+        const aria = (btn.getAttribute("aria-label") || "").toLowerCase();
+        return text.includes("chép lời") || text.includes("transcript") || aria.includes("transcript") || aria.includes("chép lời");
+      });
+      if (matchBtn) {
+        const actualBtn = matchBtn.querySelector("button") || matchBtn;
+        actualBtn.click();
+        return true;
+      }
+      return false;
+    };
+
+    if (clickNativeTranscriptButton()) return;
+
+    const expandDescriptionBtn = watchFlexy.querySelector(
+      "#description #expand, ytd-text-inline-expander #expand, #expand-button, ytd-video-secondary-info-renderer #expand, #description-inline-expander #expand"
+    );
+    if (expandDescriptionBtn) {
+      expandDescriptionBtn.click();
+      window.setTimeout(() => {
+        if (!clickNativeTranscriptButton()) {
+          openTranscriptViaMenu(watchFlexy);
+        }
+      }, 70);
+      return;
+    }
+
+    openTranscriptViaMenu(watchFlexy);
+  }
+
+  function openTranscriptViaMenu(root) {
+    const menuBtn = root.querySelector(
+      "#actions ytd-menu-renderer yt-icon-button button, #top-level-buttons-computed + ytd-menu-renderer yt-icon-button button, #actions ytd-menu-renderer button"
+    );
+    if (menuBtn) {
+      menuBtn.click();
+      window.setTimeout(() => {
+        const popupItems = [...document.querySelectorAll("ytd-menu-service-item-renderer, tp-yt-paper-item, ytd-menu-popup-renderer yt-formatted-string")];
+        const transcriptItem = popupItems.find((item) => {
+          const t = (item.textContent || "").toLowerCase();
+          return t.includes("transcript") || t.includes("chép lời");
+        });
+        if (transcriptItem) transcriptItem.click();
+        else menuBtn.click();
+      }, 80);
+    }
+  }
+
   function ensureYouTubeVideoControl() {
     if (extensionTornDown || !isYouTubeVideoPage()) return null;
     const player = document.querySelector(".html5-video-player");
     const controls = player?.querySelector(".ytp-right-controls");
     if (!player || !controls) return null;
 
+    if (!youtubeVideoTranscriptButtonEl?.isConnected) {
+      youtubeVideoTranscriptButtonEl = document.createElement("button");
+      youtubeVideoTranscriptButtonEl.type = "button";
+      youtubeVideoTranscriptButtonEl.className = "ytp-button ib-youtube-transcript-button";
+      youtubeVideoTranscriptButtonEl.setAttribute("aria-label", "Hiện bản chép lời (Transcript)");
+      youtubeVideoTranscriptButtonEl.title = "Hiện bản chép lời (Transcript)";
+      youtubeVideoTranscriptButtonEl.innerHTML = `
+        <span class="ib-youtube-transcript-button-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
+            <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/>
+          </svg>
+        </span>
+      `;
+      youtubeVideoTranscriptButtonEl.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleYouTubeNativeTranscript();
+      });
+    }
+
     if (!youtubeVideoDubbingButtonEl?.isConnected) {
       youtubeVideoDubbingButtonEl = document.createElement("button");
       youtubeVideoDubbingButtonEl.type = "button";
       youtubeVideoDubbingButtonEl.className = "ytp-button ib-youtube-dubbing-button";
       youtubeVideoDubbingButtonEl.setAttribute("aria-label", "Lồng tiếng video bằng InputBridge");
+      youtubeVideoDubbingButtonEl.title = "Lồng tiếng (AI Dubbing)";
       youtubeVideoDubbingButtonEl.innerHTML = `
         <span class="ib-youtube-dubbing-button-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24"><path d="M4 10v4h3l4 4V6L7 10H4Z"></path><path d="M15 9.2a4 4 0 0 1 0 5.6M17.5 6.8a7.2 7.2 0 0 1 0 10.4"></path></svg>
+          <svg viewBox="0 0 24 24" width="23" height="23" fill="currentColor">
+            <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+          </svg>
         </span>
-        <span class="ib-youtube-dubbing-button-label">Lồng tiếng</span>
         <span class="ib-youtube-dubbing-button-spinner" aria-hidden="true"></span>
       `;
       youtubeVideoDubbingButtonEl.addEventListener("click", (event) => {
@@ -4513,11 +5054,13 @@
       youtubeVideoControlButtonEl.type = "button";
       youtubeVideoControlButtonEl.className = "ytp-button ib-youtube-subtitle-button";
       youtubeVideoControlButtonEl.setAttribute("aria-label", "Cài đặt phụ đề InputBridge");
+      youtubeVideoControlButtonEl.title = "Cài đặt phụ đề InputBridge";
       youtubeVideoControlButtonEl.setAttribute("aria-haspopup", "dialog");
       youtubeVideoControlButtonEl.innerHTML = `
         <span class="ib-youtube-subtitle-button-mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24"><path d="M4 5.5h16v11H9l-4.2 3v-3H4v-11Z"></path><path d="M8 9h3M8 12.5h5M15.5 9H17"></path></svg>
-          <b>IB</b>
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
+            <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/>
+          </svg>
         </span>
       `;
       youtubeVideoControlButtonEl.addEventListener("click", (event) => {
@@ -4529,6 +5072,10 @@
 
     const settingsButton = controls.querySelector(".ytp-settings-button");
     const buttonHost = settingsButton?.parentElement || controls;
+    if (youtubeVideoTranscriptButtonEl.parentElement !== buttonHost) {
+      youtubeVideoTranscriptButtonEl.remove();
+      buttonHost.insertBefore(youtubeVideoTranscriptButtonEl, settingsButton || null);
+    }
     if (youtubeVideoDubbingButtonEl.parentElement !== buttonHost) {
       youtubeVideoDubbingButtonEl.remove();
       buttonHost.insertBefore(youtubeVideoDubbingButtonEl, settingsButton || null);
@@ -4558,6 +5105,10 @@
           <button class="ib-youtube-panel-close" data-role="close" type="button" aria-label="Đóng">×</button>
         </div>
         <div class="ib-youtube-panel-body" data-role="main-view">
+          <button class="ib-youtube-session-subtitle-toggle" data-role="temporary-toggle" type="button">
+            <span data-role="temporary-toggle-label">Tắt riêng video này</span>
+            <small>Chỉ trong phiên này · không lưu</small>
+          </button>
           <div class="ib-youtube-panel-row ib-youtube-panel-row-visibility" data-subtitle-visibility-row="source">
             <div class="ib-youtube-panel-row-title">
               <span>Phụ đề gốc</span>
@@ -4671,11 +5222,23 @@
     if (!panel) return;
 
     panel.querySelector('[data-role="close"]')?.addEventListener("click", closeYouTubeVideoControlPanel);
+    panel.querySelector('[data-action="prev-sentence"]')?.addEventListener("click", () => goToPreviousSentence());
+    panel.querySelector('[data-action="replay-sentence"]')?.addEventListener("click", () => replayCurrentSentence());
+    panel.querySelector('[data-action="next-sentence"]')?.addEventListener("click", () => goToNextSentence());
+    panel.querySelector('[data-role="loop-sentence"]')?.addEventListener("change", (e) => toggleLoopCurrentSentence(e.target.checked));
+    panel.querySelector('[data-role="auto-pause-sentence"]')?.addEventListener("change", (e) => toggleAutoPauseSentence(e.target.checked));
+    panel.querySelector('[data-action="set-point-a"]')?.addEventListener("click", () => setLoopPointA());
+    panel.querySelector('[data-action="set-point-b"]')?.addEventListener("click", () => setLoopPointB());
+    panel.querySelector('[data-action="toggle-ab"]')?.addEventListener("click", () => toggleLoopAB());
+    panel.querySelector('[data-action="clear-ab"]')?.addEventListener("click", () => clearLoopAB());
     panel.querySelector('[data-role="enabled"]')?.addEventListener("change", async (event) => {
       settings.videoSubtitleEnabled = Boolean(event.target.checked);
       await saveSyncSettings({ videoSubtitleEnabled: settings.videoSubtitleEnabled });
       syncVideoSubtitleFeature();
       updateYouTubeVideoControl();
+    });
+    panel.querySelector('[data-role="temporary-toggle"]')?.addEventListener("click", () => {
+      toggleCurrentVideoSubtitleTemporaryDisabled();
     });
     panel.querySelector('[data-role="source"]')?.addEventListener("change", async (event) => {
       settings.videoSubtitleSourceLanguage = event.target.value || "auto";
@@ -4705,7 +5268,6 @@
       } else if (!requested && isVideoDubbingSessionRequested()) {
         stopVideoDubbingSession({
           resumeOriginal: isVideoDubbingSessionPreparing()
-            || videoDubbingAlignmentHoldVideo === videoDubbingSessionVideo
         });
       }
       updateYouTubeVideoControl();
@@ -4992,12 +5554,24 @@
     if (!button || !dubbingButton || !panel) return;
     dubbingButton.dataset.dubbingSyncMode = "latest-start";
 
-    const enabled = Boolean(settings.enabled && settings.videoSubtitleEnabled);
+    const currentVideoSession = getCurrentVideoSubtitleSessionState();
+    const temporarilyDisabled = currentVideoSession.temporarilyDisabled;
+    const waitingForYouTubeCaptions = Boolean(
+      settings.videoSubtitleEnabled
+      && currentVideoSession.requiresNativeCaptions
+      && !currentVideoSession.nativeCaptionsEnabled
+    );
+    const enabled = currentVideoSession.effectiveEnabled;
     button.classList.toggle("is-enabled", enabled);
+    button.classList.toggle("is-session-disabled", temporarilyDisabled);
     button.setAttribute("aria-pressed", String(enabled));
-    button.title = enabled
-      ? `InputBridge · ${settings.videoSubtitleTargetLanguage || "Vietnamese"}`
-      : "Bật phụ đề InputBridge";
+    button.title = waitingForYouTubeCaptions
+      ? "Bật phụ đề YouTube (CC) để chạy phụ đề InputBridge"
+      : temporarilyDisabled
+      ? "Phụ đề InputBridge đang tắt riêng cho video này"
+      : (enabled
+        ? `InputBridge · ${settings.videoSubtitleTargetLanguage || "Vietnamese"}`
+        : "Bật phụ đề InputBridge");
 
     const quickLabels = {
       idle: "Lồng tiếng",
@@ -5034,6 +5608,8 @@
     const dubbingEnabledInput = panel.querySelector('[data-role="dubbing-enabled"]');
     const dubbingOriginalVolumeSelect = panel.querySelector('[data-role="dubbing-original-volume"]');
     const dubbingVoiceSelect = panel.querySelector('[data-role="dubbing-voice"]');
+    const temporaryToggle = panel.querySelector('[data-role="temporary-toggle"]');
+    const temporaryToggleLabel = panel.querySelector('[data-role="temporary-toggle-label"]');
     const showSource = Boolean(settings.videoSubtitleShowSource);
     const showTranslation = settings.videoSubtitleShowTranslation !== false;
     const dubbingEnabled = isVideoDubbingSessionRequested();
@@ -5055,18 +5631,38 @@
       populateVideoDubbingVoiceSelect(dubbingVoiceSelect);
       dubbingVoiceSelect.disabled = isVideoDubbingSessionPreparing();
     }
+    if (temporaryToggle) {
+      temporaryToggle.disabled = (
+        !currentVideoSession.available
+        || !settings.videoSubtitleEnabled
+        || waitingForYouTubeCaptions
+      );
+      temporaryToggle.classList.toggle("is-active", temporarilyDisabled);
+      temporaryToggle.setAttribute("aria-pressed", String(temporarilyDisabled));
+    }
+    if (temporaryToggleLabel) {
+      temporaryToggleLabel.textContent = temporarilyDisabled
+        ? "Bật lại phụ đề video này"
+        : "Tắt riêng video này";
+    }
     panel.querySelector('[data-subtitle-visibility-row="source"]')?.classList.toggle("is-line-hidden", !showSource);
     panel.querySelector('[data-subtitle-visibility-row="translation"]')?.classList.toggle("is-line-hidden", !showTranslation);
     const status = panel.querySelector('[data-role="status"]');
     if (status) {
       status.textContent = videoDubbingSessionStatus
-        || videoCaptionTimelineError
-        || (enabled
-          ? (!showSource && !showTranslation
-            ? "Đang ẩn cả hai dòng"
-            : `${settings.videoSubtitleTargetLanguage || "Vietnamese"} · phụ đề đang chạy`)
-          : "Phụ đề đang tắt · lồng tiếng chỉ chạy khi bấm");
+        || (waitingForYouTubeCaptions
+          ? "Hãy bật phụ đề YouTube (CC)"
+          : videoCaptionTimelineError
+            || (temporarilyDisabled
+              ? "Đã tắt riêng video này · không lưu"
+              : enabled
+                ? (!showSource && !showTranslation
+                  ? "Đang ẩn cả hai dòng"
+                  : `${settings.videoSubtitleTargetLanguage || "Vietnamese"} · phụ đề đang chạy`)
+                : "Phụ đề đang tắt · lồng tiếng chỉ chạy khi bấm"));
     }
+    
+
     updateYouTubeVideoStyleEditor();
   }
 
@@ -5094,7 +5690,6 @@
 
   function onYouTubeVideoControlNavigation() {
     videoDubbingResumeAfterSeekVideo = null;
-    resetVideoDubbingAlignmentPauseIntent();
     if (isVideoDubbingSessionRequested()) {
       stopVideoDubbingSession({ resumeOriginal: false });
     } else if (videoDubbingSessionState === "error") {
@@ -5106,6 +5701,10 @@
   }
 
   function onYouTubeControlDocumentPointerDown(event) {
+    const eventTarget = event.target instanceof Element ? event.target : null;
+    if (eventTarget?.closest(".ytp-subtitles-button")) {
+      window.setTimeout(syncVideoSubtitleFeature, 0);
+    }
     if (!youtubeVideoControlPanelEl?.classList.contains("is-open")) return;
     const target = event.target instanceof Node ? event.target : null;
     if (target && (
@@ -5117,6 +5716,14 @@
   }
 
   function onYouTubeControlDocumentKeyDown(event) {
+    if (
+      event.key?.toLowerCase() === "c"
+      && !event.ctrlKey
+      && !event.metaKey
+      && !event.altKey
+    ) {
+      window.setTimeout(syncVideoSubtitleFeature, 0);
+    }
     if (event.key === "Escape") closeYouTubeVideoControlPanel();
   }
 
@@ -5264,6 +5871,19 @@
   }
 
   async function onKeyDown(event) {
+    const keyLower = String(event.key || "").toLowerCase();
+    const isScreenshotHotkey =
+      (event.key === "PrintScreen") ||
+      ((event.ctrlKey || event.metaKey) && event.shiftKey && (keyLower === "s" || keyLower === "3" || keyLower === "4" || keyLower === "5")) ||
+      (event.key === "Meta" && event.shiftKey);
+
+    if (isScreenshotHotkey) {
+      selectionInteractionUntil = Date.now() + 10000;
+      if (selectionCardEl?.style.display === "block") {
+        return;
+      }
+    }
+
     if (event.key === "Escape") {
       const target = event.target instanceof Element ? event.target : null;
       const openSelect = target?.closest?.(".ib-custom-select.is-open") ||
@@ -5657,6 +6277,14 @@
                 ${renderLanguageOptions(settings.targetLanguage)}
               </select>
             </div>
+            <div>
+              <span class="ib-settings-label">Apply Behavior</span>
+              <select id="ib-inline-auto-mode" class="ib-select">
+                <option value="preview" ${settings.autoMode === 'preview' ? 'selected' : ''}>Manual Apply (default)</option>
+                <option value="autoReplace" ${settings.autoMode === 'autoReplace' ? 'selected' : ''}>Auto Apply</option>
+                <option value="autoOnSend" ${settings.autoMode === 'autoOnSend' ? 'selected' : ''}>Auto on Send</option>
+              </select>
+            </div>
           </div>
         </div>
 
@@ -5710,9 +6338,25 @@
       }
     };
 
+    const handleInlineAutoModeChange = async (event) => {
+      const nextAutoMode = ["preview", "autoReplace", "autoOnSend"].includes(event.target.value)
+        ? event.target.value
+        : "preview";
+      settings.autoMode = nextAutoMode;
+      await saveSyncSettings({ autoMode: nextAutoMode });
+      if (nextAutoMode === "autoReplace" && currentPreview?.result) {
+        applyPreview("autoReplace-setting");
+        return;
+      }
+      showToast(nextAutoMode === "autoOnSend"
+        ? "Đã bật tự động dịch khi gửi."
+        : "Đã chuyển sang bấm Apply thủ công.");
+    };
+
     previewEl.querySelector('#ib-inline-mode')?.addEventListener("change", handleInlineSettingsChange);
     previewEl.querySelector('#ib-inline-tone')?.addEventListener("change", handleInlineSettingsChange);
     previewEl.querySelector('#ib-inline-lang')?.addEventListener("change", handleInlineSettingsChange);
+    previewEl.querySelector('#ib-inline-auto-mode')?.addEventListener("change", handleInlineAutoModeChange);
 
     previewEl.style.display = "block";
     positionPreview();
@@ -5753,6 +6397,9 @@
       wrapper.className = "ib-custom-select";
       if (select.classList.contains("ib-selection-toolbar-lang")) {
         wrapper.classList.add("ib-selection-language-dropdown");
+      }
+      if (select.classList.contains("ib-selection-speech-rate-select")) {
+        wrapper.classList.add("ib-selection-rate-dropdown");
       }
 
       const trigger = document.createElement("button");
@@ -5818,7 +6465,27 @@
         item.type = "button";
         item.className = "ib-custom-select-option";
         item.dataset.value = option.value;
-        item.dataset.search = normalizeLanguageSearch(`${option.textContent} ${option.value}`);
+        const code = String(LANGUAGE_CATALOG?.codeFor(option.value, "") || "").toLowerCase();
+        const vietnameseAliases = {
+          en: "tieng anh english",
+          vi: "tieng viet vietnamese",
+          ja: "tieng nhat japanese",
+          ko: "tieng han korean",
+          "zh-cn": "tieng trung gian the chinese simplified",
+          "zh-tw": "tieng trung phon the chinese traditional",
+          fr: "tieng phap french",
+          de: "tieng duc german",
+          ru: "tieng nga russian",
+          es: "tieng tay ban nha spanish",
+          th: "tieng thai thai",
+          id: "tieng indonesia",
+          it: "tieng y italian",
+          pt: "tieng bo dao nha portuguese",
+          ar: "tieng a rap arabic",
+          hi: "tieng an do hindi"
+        };
+        const extraSearch = vietnameseAliases[code] || "";
+        item.dataset.search = normalizeLanguageSearch(`${option.textContent} ${option.value} ${code} ${extraSearch}`);
         item.textContent = option.textContent;
         item.setAttribute("role", "option");
         item.addEventListener("click", (event) => {
@@ -6002,6 +6669,10 @@
       return;
     }
 
+    if (Date.now() < selectionInteractionUntil && selectionCardEl?.style.display === "block") {
+      return;
+    }
+
     clearTimeout(selectionTimer);
     clearTimeout(selectionValidationTimer);
     selectionRequestSeq += 1;
@@ -6018,7 +6689,8 @@
     const pointerPoint = Number.isFinite(event.clientX) && Number.isFinite(event.clientY)
       ? { x: event.clientX, y: event.clientY }
       : null;
-    const forceTranslate = Boolean(settings.selectionShiftTranslate && event.shiftKey);
+    const isPureShift = Boolean(event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey);
+    const forceTranslate = Boolean(settings.selectionShiftTranslate && isPureShift);
     const pointerType = String(event.pointerType || "mouse");
 
     window.setTimeout(() => handleSelectionCandidate(root, target, {
@@ -6031,7 +6703,9 @@
   function onSelectionKeyUp(event, root) {
     if (!settings?.enabled || !settings.selectionTranslation) return;
     const key = String(event.key || "");
-    const shiftShortcut = Boolean(settings.selectionShiftTranslate && key === "Shift");
+    const isPureShiftKey = Boolean(key === "Shift" && !event.ctrlKey && !event.altKey && !event.metaKey);
+    const shiftShortcut = Boolean(settings.selectionShiftTranslate && isPureShiftKey);
+    const isPureShiftHeld = Boolean(event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey);
     const selectionKey = shiftShortcut ||
       event.shiftKey ||
       key.startsWith("Arrow") ||
@@ -6043,7 +6717,7 @@
     window.setTimeout(() => handleSelectionCandidate(root, event.target, {
       forceTranslate: shiftShortcut,
       keyboard: true,
-      deferIcon: Boolean(settings.selectionShiftTranslate && event.shiftKey && key !== "Shift")
+      deferIcon: Boolean(settings.selectionShiftTranslate && isPureShiftHeld && key !== "Shift")
     }), 0);
   }
 
@@ -6272,8 +6946,8 @@
         event.stopPropagation();
         void translateSelectedText();
       });
-      document.documentElement.appendChild(selectionIconEl);
     }
+    bringToFront(selectionIconEl);
     const shortcutHint = settings.selectionShiftTranslate ? "Click to translate · Hold Shift for instant" : "Click to translate";
     selectionIconEl.title = shortcutHint;
     selectionIconEl.dataset.hint = shortcutHint;
@@ -6281,7 +6955,7 @@
     positionSelectionUi();
   }
 
-  async function translateSelectedText() {
+  async function translateSelectedText(options = {}) {
     const state = selectionState;
     if (!state?.text) return;
 
@@ -6290,11 +6964,16 @@
     const seq = ++selectionRequestSeq;
     renderSelectionCard({ loading: true });
 
+    const manualTarget = Boolean(options.manualTarget);
+    const targetLanguage = state.targetLanguage || settings.targetLanguage;
+
     const response = await sendMessage({
       type: "IB_TRANSLATE_SELECTION",
       text: state.text,
-      targetLanguage: settings.targetLanguage,
+      targetLanguage,
       fallbackLanguage: settings.backTranslationLanguage || "Vietnamese",
+      manualTarget,
+      allowSameLanguageFallback: manualTarget ? false : undefined,
       origin: getPageOrigin(),
       contextHint: getContextHint()
     });
@@ -6309,7 +6988,7 @@
     selectionState = {
       ...state,
       result,
-      targetLanguage: response.data?.targetLanguage || settings.targetLanguage,
+      targetLanguage: manualTarget ? targetLanguage : (response.data?.targetLanguage || targetLanguage),
       detectedSourceLanguage: response.data?.detectedSourceLanguage || "",
       detectedSourceCode: response.data?.detectedSourceCode || "",
       dictionaryMode: Boolean(response.data?.dictionaryMode),
@@ -6378,28 +7057,51 @@
 
     const dictionaryMarkup = dictionaryMode ? renderSelectionDictionary(displayResult) : "";
 
+    const sourceLabel = selectionState?.detectedSourceLanguage
+      || (selectionState?.detectedSourceCode ? (LANGUAGE_CATALOG?.nameFor(selectionState.detectedSourceCode, "") || selectionState.detectedSourceCode) : "Bản gốc");
+    const targetLabel = selectionState?.targetLanguage || settings.targetLanguage || "Bản dịch";
+    const sourceSpeechLanguage = selectionState?.detectedSourceCode || selectionState?.detectedSourceLanguage || "auto";
+    const targetSpeechLanguage = selectionState?.targetLanguage || settings.targetLanguage || "Vietnamese";
+    const sourceSpeakGroup = renderSelectionSpeakGroup("source", sourceLabel, sourceSpeechLanguage, false);
+    const targetSpeakGroup = renderSelectionSpeakGroup(
+      "target",
+      targetLabel,
+      targetSpeechLanguage,
+      loading || error || !displayResult
+    );
+    const speechRate = getSelectionSpeechRate();
+
     selectionCardEl.className = `ib-selection-card ${sizeClass} ${themeClass}`.trim();
     selectionCardEl.innerHTML = `
       <div class="ib-selection-toolbar">
-        <select id="ib-selection-toolbar-lang" class="ib-select ib-selection-toolbar-lang" aria-label="Translate to language">
-          ${renderLanguageOptions(selectionState.targetLanguage || settings.targetLanguage || "English")}
-        </select>
-        <div class="ib-selection-tools">
-          <button type="button" data-ib-selection-action="speak" title="Listen" aria-label="Listen to translation">
-            <svg viewBox="0 0 24 24"><path d="M11 5 6.5 9H3v6h3.5L11 19V5Z"></path><path d="M15 9.5a4 4 0 0 1 0 5M17.8 7a7.5 7.5 0 0 1 0 10"></path></svg>
-          </button>
-          <button type="button" data-ib-selection-action="ai" class="${selectionExplanation || selectionExplanationLoading ? "is-active" : ""}" title="Explain with AI" aria-label="Explain with AI">
-            <svg viewBox="0 0 24 24"><path d="m12 3 1.2 4.1L17 8.5l-3.8 1.4L12 14l-1.2-4.1L7 8.5l3.8-1.4L12 3Z"></path><path d="m18.5 14 .7 2.3 2.3.7-2.3.8-.7 2.2-.8-2.2-2.2-.8 2.2-.7.8-2.3Z"></path></svg>
-          </button>
-          <button class="ib-selection-copy" type="button" data-ib-selection-action="copy" title="Copy translation" aria-label="Copy translation" ${loading || error || !displayResult ? "disabled" : ""}>
-            <svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-          </button>
-          <button type="button" data-ib-selection-action="settings" class="${selectionSettingsOpen ? "is-active" : ""}" title="Quick settings" aria-label="Quick settings">
-            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1-2.9 2.9-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21h-4v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1-2.9-2.9.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3v-4h.1A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.3-1.8l-.1-.1 2.9-2.9.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.5V3h4v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1 2.9 2.9-.1.1a1.7 1.7 0 0 0-.3 1.8 1.7 1.7 0 0 0 1.5 1h.1v4h-.1a1.7 1.7 0 0 0-1.5 1Z"></path></svg>
-          </button>
-          <button class="ib-selection-close" type="button" data-ib-selection-action="close" title="Close" aria-label="Close translation">
-            <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"></path></svg>
-          </button>
+        <div class="ib-selection-toolbar-main">
+          <select id="ib-selection-toolbar-lang" class="ib-select ib-selection-toolbar-lang" aria-label="Translate to language">
+            ${renderLanguageOptions(selectionState.targetLanguage || settings.targetLanguage || "English")}
+          </select>
+          <div class="ib-selection-tools">
+            <button type="button" data-ib-selection-action="ai" class="${selectionExplanation || selectionExplanationLoading ? "is-active" : ""}" title="Explain with AI" aria-label="Explain with AI">
+              <svg viewBox="0 0 24 24"><path d="m12 3 1.2 4.1L17 8.5l-3.8 1.4L12 14l-1.2-4.1L7 8.5l3.8-1.4L12 3Z"></path><path d="m18.5 14 .7 2.3 2.3.7-2.3.8-.7 2.2-.8-2.2-2.2-.8 2.2-.7.8-2.3Z"></path></svg>
+            </button>
+            <button class="ib-selection-copy" type="button" data-ib-selection-action="copy" title="Copy translation" aria-label="Copy translation" ${loading || error || !displayResult ? "disabled" : ""}>
+              <svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            </button>
+            <button type="button" data-ib-selection-action="settings" class="${selectionSettingsOpen ? "is-active" : ""}" title="Quick settings" aria-label="Quick settings">
+              <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1-2.9 2.9-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21h-4v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1-2.9-2.9.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3v-4h.1A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.3-1.8l-.1-.1 2.9-2.9.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.5V3h4v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1 2.9 2.9-.1.1a1.7 1.7 0 0 0-.3 1.8 1.7 1.7 0 0 0 1.5 1h.1v4h-.1a1.7 1.7 0 0 0-1.5 1Z"></path></svg>
+            </button>
+            <button class="ib-selection-close" type="button" data-ib-selection-action="close" title="Close" aria-label="Close translation">
+              <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"></path></svg>
+            </button>
+          </div>
+        </div>
+        <div class="ib-selection-speech-tools" aria-label="Phát âm">
+          ${sourceSpeakGroup}
+          ${targetSpeakGroup}
+          <label class="ib-selection-speech-rate">
+            <span>Tốc độ</span>
+            <select id="ib-selection-speech-rate" class="ib-select ib-selection-speech-rate-select" aria-label="Tốc độ đọc">
+              ${SELECTION_SPEECH_RATES.map((rate) => `<option value="${rate}" ${rate === speechRate ? "selected" : ""}>${rate}×</option>`).join("")}
+            </select>
+          </label>
         </div>
       </div>
       <div class="ib-selection-body">
@@ -6414,10 +7116,52 @@
     `;
 
     upgradeInlineSelects(selectionCardEl);
+    // Start loading the browser voice registry while the card is being shown,
+    // instead of making the first speaker click pay that initialization cost.
+    try { window.speechSynthesis?.getVoices?.(); } catch {}
     bindSelectionCardActions({ loading, error, result: displayResult });
     selectionCardEl.style.display = "block";
     positionSelectionUi({ preserveCardPlacement: true });
-    if (!loading && !error && displayResult) void refreshSelectionFavoriteState();
+    if (!loading && !error && displayResult) {
+      void refreshSelectionFavoriteState();
+      warmSelectionBackgroundTts(displayResult, targetSpeechLanguage);
+    }
+  }
+
+  function isEnglishSpeechLanguage(languageNameOrCode) {
+    const raw = String(languageNameOrCode || "").trim();
+    if (!raw || /^(?:auto|auto detect)$/i.test(raw)) return false;
+    const code = LANGUAGE_CATALOG?.codeFor(raw, "") || raw;
+    return String(code).trim().toLowerCase().replace(/_/g, "-").split("-")[0] === "en";
+  }
+
+  function renderSelectionSpeakGroup(mode, languageLabel, languageNameOrCode, disabled) {
+    const action = mode === "source" ? "speak-source" : "speak-target";
+    const contentLabel = mode === "source" ? "bản gốc" : "bản dịch";
+    const groupLabel = mode === "source" ? "Gốc" : "Dịch";
+    const soundPath = mode === "source"
+      ? '<path d="M15 9.5a4 4 0 0 1 0 5"></path>'
+      : '<path d="M15 9.5a4 4 0 0 1 0 5M17.8 7a7.5 7.5 0 0 1 0 10"></path>';
+    const speakerIcon = `<svg viewBox="0 0 24 24"><path d="M11 5 6.5 9H3v6h3.5L11 19V5Z"></path>${soundPath}</svg>`;
+    const disabledAttribute = disabled ? "disabled" : "";
+
+    const buttons = isEnglishSpeechLanguage(languageNameOrCode)
+      ? [
+        { locale: "en-US", tag: "US", accent: "Mỹ" },
+        { locale: "en-GB", tag: "UK", accent: "Anh" }
+      ].map(({ locale, tag, accent }) => `
+        <button type="button" data-ib-selection-action="${action}" data-ib-speech-accent="${locale}" class="ib-selection-speak-btn ib-selection-accent-btn" title="Đọc ${contentLabel} bằng giọng ${accent}" aria-label="Đọc ${contentLabel} bằng giọng ${accent}" ${disabledAttribute}>
+          ${speakerIcon}
+          <span class="ib-speak-tag">${tag}</span>
+        </button>`).join("")
+      : `<button type="button" data-ib-selection-action="${action}" class="ib-selection-speak-btn" title="Đọc ${contentLabel} (${escapeHtml(languageLabel)})" aria-label="Đọc ${contentLabel}" ${disabledAttribute}>
+          ${speakerIcon}
+        </button>`;
+
+    return `<div class="ib-selection-speech-group ib-selection-speech-${mode}">
+      <span class="ib-selection-speech-label">${groupLabel}</span>
+      ${buttons}
+    </div>`;
   }
 
   function renderSelectionDictionary(primaryMeaning) {
@@ -6474,7 +7218,12 @@
       await navigator.clipboard.writeText(text).catch(() => {});
       showToast("Đã copy bản dịch.");
     }));
-    selectionCardEl.querySelector('[data-ib-selection-action="speak"]')?.addEventListener("click", speakSelectionTranslation);
+    selectionCardEl.querySelectorAll('[data-ib-selection-action="speak-source"]').forEach((button) => {
+      button.addEventListener("click", () => void speakSelectionText("source", button, button.dataset.ibSpeechAccent || ""));
+    });
+    selectionCardEl.querySelectorAll('[data-ib-selection-action="speak-target"]').forEach((button) => {
+      button.addEventListener("click", () => void speakSelectionText("target", button, button.dataset.ibSpeechAccent || ""));
+    });
     selectionCardEl.querySelectorAll('[data-ib-selection-action="ai"]').forEach((button) => button.addEventListener("click", toggleSelectionExplanation));
     selectionCardEl.querySelector('[data-ib-selection-action="favorite"]')?.addEventListener("click", () => void toggleSelectionFavorite());
     selectionCardEl.querySelector('[data-ib-selection-action="theme"]')?.addEventListener("click", () => {
@@ -6491,12 +7240,13 @@
     const triggerSelect = selectionCardEl.querySelector('#ib-selection-trigger');
     const shiftCheck = selectionCardEl.querySelector('#ib-selection-shift');
     const editableCheck = selectionCardEl.querySelector('#ib-selection-editable');
+    const speechRateSelect = selectionCardEl.querySelector('#ib-selection-speech-rate');
     languageSelects.forEach((languageSelect) => languageSelect.addEventListener("change", async () => {
       const nextLanguage = languageSelect.value || settings.targetLanguage;
       settings.targetLanguage = nextLanguage;
       if (selectionState) selectionState.targetLanguage = nextLanguage;
       await saveSyncSettings({ targetLanguage: nextLanguage });
-      void translateSelectedText();
+      void translateSelectedText({ manualTarget: true });
     }));
     triggerSelect?.addEventListener("change", () => {
       settings.selectionTrigger = triggerSelect.value;
@@ -6510,29 +7260,332 @@
       settings.selectionAllowEditable = editableCheck.checked;
       void saveSyncSettings({ selectionAllowEditable: settings.selectionAllowEditable });
     });
+    speechRateSelect?.addEventListener("change", () => {
+      settings.selectionSpeechRate = getSelectionSpeechRate(speechRateSelect.value);
+      speechRateSelect.value = String(settings.selectionSpeechRate);
+      stopSelectionSpeech();
+      void saveSyncSettings({ selectionSpeechRate: settings.selectionSpeechRate });
+    });
   }
 
-  function speakSelectionTranslation() {
-    const dictionaryMode = Boolean(selectionState?.dictionaryMode);
-    const text = dictionaryMode ? selectionState?.text : selectionState?.result;
-    if (!text || !("speechSynthesis" in window)) {
-      showToast("Trình duyệt này không hỗ trợ đọc văn bản.");
+  let currentSelectionAudioPlayer = null;
+  let selectionAudioContext = null;
+  let currentSelectionAudioSource = null;
+  let currentSpeakingAction = null;
+  const selectionTtsCache = new Map();
+  const selectionTtsPending = new Map();
+  const SELECTION_TTS_CACHE_LIMIT = 16;
+  const SELECTION_SPEECH_RATES = [0.75, 1, 1.25, 1.5, 2];
+  const SELECTION_SPEECH_CHUNK_CHARS = 140;
+
+  function getSelectionSpeechRate(value = settings.selectionSpeechRate) {
+    const requested = clampNumber(value, 0.75, 2, 1);
+    return SELECTION_SPEECH_RATES.reduce((best, rate) => (
+      Math.abs(rate - requested) < Math.abs(best - requested) ? rate : best
+    ), 1);
+  }
+
+  async function speakSelectionText(mode = "target", buttonEl = null, accent = "") {
+    const isSource = mode === "source";
+    const text = isSource ? selectionState?.text : (selectionState?.result || selectionState?.text);
+    if (!text) return;
+    const speechAction = `${mode}:${accent || "default"}`;
+
+    if (currentSpeakingAction === speechAction) {
+      stopSelectionSpeech();
       return;
     }
-    if (videoDubbingUtterance) stopVideoDubbing(false);
-    else window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    const speechLanguage = dictionaryMode
-      ? selectionState?.detectedSourceLanguage || selectionState?.detectedSourceCode
-      : selectionState?.targetLanguage || settings.targetLanguage;
-    utterance.lang = selectionSpeechLanguage(speechLanguage);
-    utterance.rate = 0.95;
+
+    stopSelectionSpeech();
+    currentSpeakingAction = speechAction;
+    if (buttonEl) buttonEl.classList.add("is-speaking");
+    primeSelectionAudioContext();
+
+    const langNameOrCode = accent || (isSource
+      ? (selectionState?.detectedSourceLanguage || selectionState?.detectedSourceCode || "auto")
+      : (selectionState?.targetLanguage || settings.targetLanguage || "Vietnamese"));
+
+    const langCode = getSpeechLanguageCode(langNameOrCode, text);
+    const languageBase = String(langCode || "").toLowerCase().replace(/_/g, "-").split("-")[0];
+
+    const availableVoices = "speechSynthesis" in window
+      ? window.speechSynthesis.getVoices()
+      : [];
+    const matchedVoice = findBestSpeechVoice(availableVoices, langCode, Boolean(accent) || languageBase === "vi");
+
+    // Do not trust Chrome's vi-VN label here: on some Windows installations it
+    // still resolves to the default English OS voice. Vietnamese is always sent
+    // to the provider that resolves a real Vietnamese voice; the audio is
+    // prefetched when the translated card appears to keep playback responsive.
+    if (languageBase === "vi") {
+      await fallbackToBackgroundSelectionTts(text, langCode, speechAction, buttonEl);
+      return;
+    }
+
+    if ("speechSynthesis" in window) {
+      try {
+        if (videoDubbingUtterance) stopVideoDubbing(false);
+        const chunks = splitSelectionSpeechText(text);
+        speakLocalSelectionChunks(chunks, 0, langCode, matchedVoice, speechAction, buttonEl);
+        return;
+      } catch (err) {
+        console.warn("speechSynthesis exception, falling back to background TTS:", err);
+      }
+    }
+
+    // High quality Edge / Google TTS fallback with native accent
+    await fallbackToBackgroundSelectionTts(text, langCode, speechAction, buttonEl);
+  }
+
+  function splitSelectionSpeechText(text, maxChars = SELECTION_SPEECH_CHUNK_CHARS) {
+    const normalized = String(text || "").replace(/\s+/gu, " ").trim();
+    if (!normalized) return [];
+    if (normalized.length <= maxChars) return [normalized];
+
+    const chunks = [];
+    let remaining = normalized;
+    while (remaining.length > maxChars) {
+      const windowText = remaining.slice(0, maxChars + 1);
+      const minimumBreak = Math.floor(maxChars * 0.55);
+      let breakAt = -1;
+      for (const pattern of [/[.!?。！？;:]/gu, /[,，、]/gu, /\s/gu]) {
+        for (const match of windowText.matchAll(pattern)) {
+          const candidate = Number(match.index || 0) + match[0].length;
+          if (candidate >= minimumBreak && candidate <= maxChars) breakAt = Math.max(breakAt, candidate);
+        }
+        if (breakAt >= minimumBreak) break;
+      }
+      if (breakAt < 1) {
+        breakAt = maxChars;
+        const previousCode = remaining.charCodeAt(breakAt - 1);
+        const nextCode = remaining.charCodeAt(breakAt);
+        if (previousCode >= 0xD800 && previousCode <= 0xDBFF && nextCode >= 0xDC00 && nextCode <= 0xDFFF) {
+          breakAt -= 1;
+        }
+      }
+      chunks.push(remaining.slice(0, breakAt).trim());
+      remaining = remaining.slice(breakAt).trim();
+    }
+    if (remaining) chunks.push(remaining);
+    return chunks.filter(Boolean);
+  }
+
+  function finishSelectionSpeech(speechAction, buttonEl, showError = false) {
+    if (currentSpeakingAction !== speechAction) return;
+    currentSpeakingAction = null;
+    if (buttonEl) buttonEl.classList.remove("is-speaking");
+    if (showError) showToast("Không thể phát âm thanh.");
+  }
+
+  function speakLocalSelectionChunks(chunks, index, langCode, matchedVoice, speechAction, buttonEl) {
+    if (currentSpeakingAction !== speechAction) return;
+    if (index >= chunks.length) {
+      finishSelectionSpeech(speechAction, buttonEl);
+      return;
+    }
+
+    const utterance = new SpeechSynthesisUtterance(chunks[index]);
+    utterance.lang = matchedVoice?.lang || langCode;
+    if (matchedVoice) utterance.voice = matchedVoice;
+    utterance.rate = getSelectionSpeechRate();
+    utterance.onend = () => {
+      if (currentSpeakingAction !== speechAction) return;
+      speakLocalSelectionChunks(chunks, index + 1, langCode, matchedVoice, speechAction, buttonEl);
+    };
+    utterance.onerror = (err) => {
+      if (currentSpeakingAction !== speechAction || /^(?:canceled|interrupted)$/i.test(err?.error || "")) return;
+      console.warn("speechSynthesis error, attempting background TTS:", err);
+      void fallbackToBackgroundSelectionTts(chunks.slice(index).join(" "), langCode, speechAction, buttonEl);
+    };
+    window.speechSynthesis.resume?.();
     window.speechSynthesis.speak(utterance);
   }
 
-  function selectionSpeechLanguage(language) {
-    const code = LANGUAGE_CATALOG?.codeFor(language, "en") || "en";
-    const regionalDefaults = {
+  function stopSelectionSpeech() {
+    if ("speechSynthesis" in window && !videoDubbingUtterance) {
+      try { window.speechSynthesis.cancel(); } catch {}
+    }
+    if (currentSelectionAudioPlayer) {
+      try {
+        currentSelectionAudioPlayer.pause();
+        currentSelectionAudioPlayer.currentTime = 0;
+      } catch {}
+      currentSelectionAudioPlayer = null;
+    }
+    if (currentSelectionAudioSource) {
+      try { currentSelectionAudioSource.stop(); } catch {}
+      try { currentSelectionAudioSource.disconnect(); } catch {}
+      currentSelectionAudioSource = null;
+    }
+    currentSpeakingAction = null;
+    selectionCardEl?.querySelectorAll('.is-speaking').forEach((btn) => {
+      btn.classList.remove("is-speaking");
+    });
+  }
+
+  async function fallbackToBackgroundSelectionTts(text, languageName, speechAction, buttonEl) {
+    try {
+      const chunks = splitSelectionSpeechText(text);
+      await playBackgroundSelectionChunks(chunks, 0, languageName, speechAction, buttonEl);
+    } catch (err) {
+      finishSelectionSpeech(speechAction, buttonEl, true);
+    }
+  }
+
+  async function playBackgroundSelectionChunks(chunks, index, languageName, speechAction, buttonEl) {
+    if (currentSpeakingAction !== speechAction) return;
+    if (index >= chunks.length) {
+      finishSelectionSpeech(speechAction, buttonEl);
+      return;
+    }
+
+    const response = await requestSelectionBackgroundTts(chunks[index], languageName);
+    if (currentSpeakingAction !== speechAction) return;
+    if (!response?.ok || !response?.data?.audioUrl) throw new Error(response?.error || "TTS failed");
+
+    const audioContext = primeSelectionAudioContext();
+    if (audioContext) {
+      const encodedAudio = selectionAudioDataUrlToArrayBuffer(response.data.audioUrl);
+      const audioBuffer = await audioContext.decodeAudioData(encodedAudio);
+      if (currentSpeakingAction !== speechAction) return;
+
+      const source = audioContext.createBufferSource();
+      source.buffer = audioBuffer;
+      source.playbackRate.value = getSelectionSpeechRate();
+      source.connect(audioContext.destination);
+      currentSelectionAudioSource = source;
+
+      if (chunks[index + 1]) {
+        void requestSelectionBackgroundTts(chunks[index + 1], languageName).catch(() => {});
+      }
+
+      source.onended = () => {
+        if (currentSelectionAudioSource !== source || currentSpeakingAction !== speechAction) return;
+        try { source.disconnect(); } catch {}
+        currentSelectionAudioSource = null;
+        void playBackgroundSelectionChunks(chunks, index + 1, languageName, speechAction, buttonEl)
+          .catch(() => finishSelectionSpeech(speechAction, buttonEl, true));
+      };
+      source.start(0);
+      return;
+    }
+
+    const audio = new Audio(response.data.audioUrl);
+    audio.preload = "auto";
+    audio.preservesPitch = true;
+    audio.playbackRate = getSelectionSpeechRate();
+    currentSelectionAudioPlayer = audio;
+
+    if (chunks[index + 1]) {
+      void requestSelectionBackgroundTts(chunks[index + 1], languageName).catch(() => {});
+    }
+
+    audio.onended = () => {
+      if (currentSelectionAudioPlayer !== audio || currentSpeakingAction !== speechAction) return;
+      currentSelectionAudioPlayer = null;
+      void playBackgroundSelectionChunks(chunks, index + 1, languageName, speechAction, buttonEl)
+        .catch(() => finishSelectionSpeech(speechAction, buttonEl, true));
+    };
+    audio.onerror = () => {
+      if (currentSelectionAudioPlayer !== audio) return;
+      currentSelectionAudioPlayer = null;
+      finishSelectionSpeech(speechAction, buttonEl, true);
+    };
+    try {
+      await audio.play();
+    } catch (error) {
+      if (currentSelectionAudioPlayer === audio) currentSelectionAudioPlayer = null;
+      throw error;
+    }
+  }
+
+  function primeSelectionAudioContext() {
+    try {
+      const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextCtor) return null;
+      if (!selectionAudioContext || selectionAudioContext.state === "closed") {
+        selectionAudioContext = new AudioContextCtor();
+      }
+      if (selectionAudioContext.state === "suspended") {
+        void selectionAudioContext.resume().catch(() => {});
+      }
+      return selectionAudioContext;
+    } catch {
+      return null;
+    }
+  }
+
+  function selectionAudioDataUrlToArrayBuffer(audioUrl) {
+    const value = String(audioUrl || "");
+    const commaIndex = value.indexOf(",");
+    if (!value.startsWith("data:") || commaIndex < 0) throw new Error("Invalid TTS audio URL");
+    const metadata = value.slice(0, commaIndex);
+    const payload = value.slice(commaIndex + 1);
+    const binary = /;base64/i.test(metadata) ? atob(payload) : decodeURIComponent(payload);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+    return bytes.buffer;
+  }
+
+  function getSelectionTtsCacheKey(text, languageName) {
+    return `${String(languageName || "auto").toLowerCase()}\u0000${String(text || "").replace(/\s+/gu, " ").trim()}`;
+  }
+
+  async function requestSelectionBackgroundTts(text, languageName) {
+    const cacheKey = getSelectionTtsCacheKey(text, languageName);
+    const cached = selectionTtsCache.get(cacheKey);
+    if (cached) return cached;
+    const pending = selectionTtsPending.get(cacheKey);
+    if (pending) return pending;
+
+    const task = sendMessage({
+      type: "IB_VIDEO_DUBBING_TTS",
+      text,
+      language: languageName || "auto",
+      providerPolicy: String(getSpeechLanguageCode(languageName, text)).toLowerCase().startsWith("vi")
+        ? "google"
+        : undefined,
+      manualSession: true
+    }).then((response) => {
+      if (response?.ok && response?.data?.audioUrl) {
+        if (selectionTtsCache.size >= SELECTION_TTS_CACHE_LIMIT) {
+          const oldestKey = selectionTtsCache.keys().next().value;
+          if (oldestKey !== undefined) selectionTtsCache.delete(oldestKey);
+        }
+        selectionTtsCache.set(cacheKey, response);
+      }
+      return response;
+    }).finally(() => {
+      selectionTtsPending.delete(cacheKey);
+    });
+
+    selectionTtsPending.set(cacheKey, task);
+    return task;
+  }
+
+  function warmSelectionBackgroundTts(text, languageName) {
+    const langCode = getSpeechLanguageCode(languageName, text);
+    const languageBase = String(langCode || "").toLowerCase().replace(/_/g, "-").split("-")[0];
+    if (languageBase !== "vi") return;
+    const chunks = splitSelectionSpeechText(text);
+    chunks.slice(0, 2).forEach((chunk) => {
+      void requestSelectionBackgroundTts(chunk, langCode).catch(() => {});
+    });
+  }
+
+  function hasVietnameseSpeechMarkers(text) {
+    const value = String(text || "");
+    if (/[ăâđêôơưĂÂĐÊÔƠƯ]/u.test(value)) return true;
+    const toneMarks = value.match(/[àáạảãằắặẳẵầấậẩẫèéẹẻẽềếệểễìíịỉĩòóọỏõồốộổỗờớợởỡùúụủũừứựửữỳýỵỷỹ]/giu);
+    return Boolean(toneMarks && toneMarks.length >= 2);
+  }
+
+  function getSpeechLanguageCode(languageName, text = "") {
+    if (!languageName || languageName === "Auto detect" || languageName === "auto") {
+      return hasVietnameseSpeechMarkers(text) ? "vi-VN" : "en-US";
+    }
+    const code = LANGUAGE_CATALOG?.codeFor(languageName, "en") || "en";
+    const map = {
       en: "en-US",
       vi: "vi-VN",
       ja: "ja-JP",
@@ -6543,9 +7596,45 @@
       pt: "pt-BR",
       ar: "ar-SA",
       hi: "hi-IN",
-      zh: "zh-CN"
+      zh: "zh-CN",
+      "zh-cn": "zh-CN",
+      "zh-tw": "zh-TW",
+      ru: "ru-RU",
+      th: "th-TH",
+      id: "id-ID",
+      it: "it-IT",
+      nl: "nl-NL",
+      pl: "pl-PL",
+      tr: "tr-TR",
+      uk: "uk-UA"
     };
-    return regionalDefaults[String(code).toLowerCase()] || code;
+    return map[String(code).toLowerCase()] || code;
+  }
+
+  function findBestSpeechVoice(voices, langCode, requireExactLocale = false) {
+    if (!voices || !voices.length) return null;
+    const prefix = String(langCode || "").split("-")[0].toLowerCase();
+    const full = String(langCode || "").toLowerCase().replace(/_/g, "-");
+
+    const preferLowLatencyVoice = (matches) => matches.find((voice) => voice.localService && !/online/i.test(voice.name || ""))
+      || matches.find((voice) => voice.localService)
+      || matches.find((voice) => !/online/i.test(voice.name || ""))
+      || matches[0]
+      || null;
+
+    const exactMatches = voices.filter((v) => String(v.lang || "").toLowerCase().replace(/_/g, "-") === full);
+    if (exactMatches.length) {
+      return preferLowLatencyVoice(exactMatches);
+    }
+
+    if (requireExactLocale) return null;
+
+    const prefixMatches = voices.filter((v) => String(v.lang || "").toLowerCase().startsWith(prefix));
+    if (prefixMatches.length) {
+      return preferLowLatencyVoice(prefixMatches);
+    }
+
+    return null;
   }
 
   function toggleSelectionExplanation() {
@@ -6634,15 +7723,68 @@
     return selectionState.selectionBounds || selectionState.anchorRect || null;
   }
 
+  let selectionDomObserver = null;
+
+  function startSelectionDomObserver() {
+    if (selectionDomObserver) return;
+    try {
+      selectionDomObserver = new MutationObserver(() => {
+        if (selectionCardEl?.style.display === "block") bringToFront(selectionCardEl);
+        if (selectionIconEl?.style.display === "flex") bringToFront(selectionIconEl);
+      });
+      selectionDomObserver.observe(document.documentElement, { childList: true, subtree: true });
+    } catch {}
+  }
+
+  function stopSelectionDomObserver() {
+    if (selectionDomObserver) {
+      try { selectionDomObserver.disconnect(); } catch {}
+      selectionDomObserver = null;
+    }
+  }
+
+  function getCompetingSelectionOverlayObstacles() {
+    const obstacles = [];
+    try {
+      const elements = document.querySelectorAll('div, section, aside, nav, button, [class*="tooltip"], [class*="menu"], [class*="toolbar"], [class*="popup"], [class*="action"], [class*="bubble"], [class*="ask"], [class*="gpt"]');
+      for (const el of elements) {
+        if (!(el instanceof HTMLElement)) continue;
+        if (el.closest('.ib-selection-card, .ib-selection-icon, .ib-preview-card, .ib-toast')) continue;
+        const style = window.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') continue;
+        if (style.position !== 'fixed' && style.position !== 'absolute') continue;
+        const rect = el.getBoundingClientRect();
+        if (rect.width > 20 && rect.width < 550 && rect.height > 15 && rect.height < 320) {
+          obstacles.push(copyRect(rect));
+        }
+      }
+    } catch {}
+    return obstacles;
+  }
+
+  function bringToFront(el) {
+    if (!el) return;
+    try {
+      el.style.setProperty("position", "fixed", "important");
+      el.style.setProperty("z-index", "2147483647", "important");
+      el.style.setProperty("isolation", "auto", "important");
+      if (el.parentElement !== document.documentElement || document.documentElement.lastElementChild !== el) {
+        document.documentElement.appendChild(el);
+      }
+      startSelectionDomObserver();
+    } catch {}
+  }
+
   function positionSelectionUi(options = {}) {
     if (!selectionState) return;
     const bounds = refreshSelectionRect();
     if (!bounds) return;
 
     const anchor = selectionState.anchorRect || bounds;
+    const extraObstacles = getCompetingSelectionOverlayObstacles();
     const obstacles = Array.isArray(selectionState.selectionRects) && selectionState.selectionRects.length
-      ? selectionState.selectionRects
-      : [bounds];
+      ? [...selectionState.selectionRects, ...extraObstacles]
+      : [bounds, ...extraObstacles];
     const outsideViewport = bounds.bottom < -24 || bounds.top > window.innerHeight + 24 || bounds.right < -24 || bounds.left > window.innerWidth + 24;
     if (outsideViewport) {
       hideSelectionUi();
@@ -6656,6 +7798,7 @@
       : { x: anchor.right, y: anchor.bottom };
 
     if (selectionIconEl?.style.display === "flex") {
+      bringToFront(selectionIconEl);
       const width = selectionIconEl.offsetWidth || 30;
       const height = selectionIconEl.offsetHeight || 30;
       const gap = 8;
@@ -6684,6 +7827,7 @@
     }
 
     if (selectionCardEl?.style.display === "block") {
+      bringToFront(selectionCardEl);
       const width = Math.min(selectionCardEl.offsetWidth || 320, window.innerWidth - 24);
       const height = Math.min(selectionCardEl.offsetHeight || 150, window.innerHeight - 24);
       const gap = 10;
@@ -6795,6 +7939,8 @@
   }
 
   function hideSelectionUi() {
+    stopSelectionSpeech();
+    stopSelectionDomObserver();
     clearTimeout(selectionTimer);
     clearTimeout(selectionValidationTimer);
     selectionRequestSeq += 1;

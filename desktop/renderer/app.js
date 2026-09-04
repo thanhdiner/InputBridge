@@ -2,12 +2,19 @@ const captureButton = document.getElementById("captureButton");
 const sourceLanguage = document.getElementById("sourceLanguage");
 const targetLanguage = document.getElementById("targetLanguage");
 const showOriginal = document.getElementById("showOriginal");
+const pushToTalkEnabled = document.getElementById("pushToTalkEnabled");
 const startupEnabled = document.getElementById("startupEnabled");
 const hotkeyLabel = document.getElementById("hotkeyLabel");
 const hotkeyRecorder = document.getElementById("hotkeyRecorder");
 const hotkeyValue = document.getElementById("hotkeyValue");
 const hotkeyHint = document.getElementById("hotkeyHint");
 const resetHotkeyButton = document.getElementById("resetHotkeyButton");
+const voiceHotkeyRecorder = document.getElementById("voiceHotkeyRecorder");
+const voiceHotkeyValue = document.getElementById("voiceHotkeyValue");
+const voiceHotkeyHint = document.getElementById("voiceHotkeyHint");
+const resetVoiceHotkeyButton = document.getElementById("resetVoiceHotkeyButton");
+const voiceToggleButton = document.getElementById("voiceToggleButton");
+const voiceStatus = document.getElementById("voiceStatus");
 const minimizeButton = document.getElementById("minimizeButton");
 const closeAppButton = document.getElementById("closeAppButton");
 const advancedToggle = document.getElementById("advancedToggle");
@@ -15,8 +22,11 @@ const advancedContent = document.getElementById("advancedContent");
 const message = document.getElementById("message");
 
 const DEFAULT_HOTKEY = "CommandOrControl+Shift+X";
+const DEFAULT_VOICE_HOTKEY = "Super+Shift+F";
 let settings = null;
 let currentHotkey = { accelerator: DEFAULT_HOTKEY, label: "Ctrl + Shift + X" };
+let currentVoiceHotkey = { accelerator: DEFAULT_VOICE_HOTKEY, label: "Win + Shift + F" };
+let recordingTarget = "capture";
 let saveTimer = null;
 let recording = false;
 let recordingTimer = null;
@@ -28,11 +38,14 @@ async function init() {
   const data = await window.inputBridge.getBootstrap();
   settings = data.settings;
   currentHotkey = data.hotkey || currentHotkey;
+  currentVoiceHotkey = data.voiceHotkey || currentVoiceHotkey;
   renderHotkey(currentHotkey);
+  renderVoiceHotkey(currentVoiceHotkey);
   populateLanguages(data.languages || []);
   sourceLanguage.value = settings.sourceLanguage || "Auto detect";
   targetLanguage.value = settings.targetLanguage || "Vietnamese";
   showOriginal.checked = settings.showOriginal !== false;
+  pushToTalkEnabled.checked = settings.pushToTalkEnabled !== false;
   startupEnabled.checked = settings.startupEnabled !== false;
 
   createMacSelect(sourceLanguage, {
@@ -48,13 +61,18 @@ async function init() {
   sourceLanguage.addEventListener("change", scheduleSave);
   targetLanguage.addEventListener("change", scheduleSave);
   showOriginal.addEventListener("change", scheduleSave);
+  pushToTalkEnabled.addEventListener("change", scheduleSave);
   startupEnabled.addEventListener("change", updateStartupSetting);
-  hotkeyRecorder.addEventListener("click", beginHotkeyRecording);
+  hotkeyRecorder.addEventListener("click", () => beginHotkeyRecording("capture"));
   resetHotkeyButton.addEventListener("click", () => setHotkey(DEFAULT_HOTKEY));
+  voiceHotkeyRecorder.addEventListener("click", () => beginHotkeyRecording("voice"));
+  resetVoiceHotkeyButton.addEventListener("click", () => setVoiceHotkey(DEFAULT_VOICE_HOTKEY));
+  voiceToggleButton.addEventListener("click", toggleVoice);
   minimizeButton.addEventListener("click", () => window.inputBridge.minimizeWindow());
   closeAppButton.addEventListener("click", () => window.inputBridge.closeWindow());
   advancedToggle.addEventListener("click", toggleAdvancedSettings);
   document.addEventListener("keydown", handleHotkeyRecording, true);
+  window.inputBridge.onVoiceStatus(renderVoiceStatus);
   window.inputBridge.onWarning((warning) => showMessage(warning));
 }
 
@@ -299,7 +317,8 @@ async function saveNow() {
     settings = await window.inputBridge.saveSettings({
       sourceLanguage: sourceLanguage.value,
       targetLanguage: targetLanguage.value,
-      showOriginal: showOriginal.checked
+      showOriginal: showOriginal.checked,
+      pushToTalkEnabled: pushToTalkEnabled.checked
     });
     showMessage("Đã lưu.", true);
   } catch (error) {
@@ -338,13 +357,17 @@ async function startCapture() {
   }
 }
 
-function beginHotkeyRecording() {
+function beginHotkeyRecording(target = "capture") {
   clearTimeout(recordingTimer);
   recording = true;
-  hotkeyRecorder.classList.add("recording");
-  hotkeyValue.textContent = "Nhấn tổ hợp phím…";
-  hotkeyHint.textContent = "Esc để hủy · cần phím chính, không chỉ modifier";
-  hotkeyRecorder.focus();
+  recordingTarget = target;
+  const recorder = target === "voice" ? voiceHotkeyRecorder : hotkeyRecorder;
+  const value = target === "voice" ? voiceHotkeyValue : hotkeyValue;
+  const hint = target === "voice" ? voiceHotkeyHint : hotkeyHint;
+  recorder.classList.add("recording");
+  value.textContent = "Nhấn tổ hợp phím…";
+  hint.textContent = "Esc để hủy · cần phím chính, không chỉ modifier";
+  recorder.focus();
   recordingTimer = setTimeout(cancelHotkeyRecording, 10000);
 }
 
@@ -353,7 +376,9 @@ function cancelHotkeyRecording() {
   recording = false;
   clearTimeout(recordingTimer);
   hotkeyRecorder.classList.remove("recording");
+  voiceHotkeyRecorder.classList.remove("recording");
   renderHotkey(currentHotkey);
+  renderVoiceHotkey(currentVoiceHotkey);
 }
 
 async function handleHotkeyRecording(event) {
@@ -368,14 +393,16 @@ async function handleHotkeyRecording(event) {
 
   const accelerator = acceleratorFromEvent(event);
   if (!accelerator) {
-    hotkeyValue.textContent = "Đang chờ phím chính…";
+    (recordingTarget === "voice" ? voiceHotkeyValue : hotkeyValue).textContent = "Đang chờ phím chính…";
     return;
   }
 
   recording = false;
   clearTimeout(recordingTimer);
   hotkeyRecorder.classList.remove("recording");
-  await setHotkey(accelerator);
+  voiceHotkeyRecorder.classList.remove("recording");
+  if (recordingTarget === "voice") await setVoiceHotkey(accelerator);
+  else await setHotkey(accelerator);
 }
 
 function acceleratorFromEvent(event) {
@@ -454,6 +481,50 @@ function renderHotkey(hotkey) {
   hotkeyLabel.textContent = label;
   hotkeyValue.textContent = label;
   hotkeyHint.textContent = "Bấm vào đây rồi nhấn tổ hợp mới";
+}
+
+async function setVoiceHotkey(accelerator) {
+  voiceHotkeyValue.textContent = "Đang đăng ký…";
+  voiceHotkeyHint.textContent = "Kiểm tra xung đột phím tắt";
+  try {
+    const result = await window.inputBridge.setVoiceHotkey(accelerator);
+    if (!result?.ok) throw new Error(result?.error || "Không đăng ký được phím voice.");
+    currentVoiceHotkey = { accelerator: result.accelerator, label: result.label };
+    settings = { ...settings, voiceHotkey: result.accelerator };
+    renderVoiceHotkey(currentVoiceHotkey);
+    showMessage("Đã đổi phím voice.", true);
+  } catch (error) {
+    renderVoiceHotkey(currentVoiceHotkey);
+    showMessage(error?.message || String(error));
+  }
+}
+
+function renderVoiceHotkey(hotkey) {
+  const label = hotkey?.label || "Win + Shift + F";
+  voiceHotkeyValue.textContent = label;
+  voiceHotkeyHint.textContent = "Bấm lần 1 để nói, lần 2 để dừng";
+}
+
+async function toggleVoice() {
+  const result = await window.inputBridge.toggleVoice();
+  if (!result?.ok) showMessage(result?.error || "Không bật được voice input.");
+}
+
+function renderVoiceStatus(data = {}) {
+  const labels = {
+    starting: "Đang mở micro…",
+    recording: data.partial ? `Đang nghe: ${data.partial}` : "Đang nghe…",
+    processing: "Đang nhận âm thanh…",
+    transcribing: "Đang chép lời bằng Whisper…",
+    translating: "Đang dịch…",
+    done: "Đã dịch và chèn vào ô đang focus",
+    error: data.error || "Voice input lỗi"
+  };
+  voiceStatus.textContent = labels[data.status] || "Sẵn sàng";
+  const active = ["starting", "recording", "processing", "transcribing", "translating"].includes(data.status);
+  voiceToggleButton.textContent = active ? "Dừng và chèn" : "Bắt đầu nói";
+  voiceToggleButton.classList.toggle("active", active);
+  if (data.status === "error") showMessage(data.error || "Voice input lỗi");
 }
 
 function showMessage(text, success = false) {
